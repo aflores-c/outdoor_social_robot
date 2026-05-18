@@ -27,8 +27,10 @@ class BNO055SerialImuNode(Node):
         self.debug_serial = bool(self.get_parameter("debug_serial").value)
         self.accel_scale = float(self.get_parameter("accel_scale").value)
 
-        # Hardcoded gyro bias correction in rad/s.
-        self.gyro_bias_x = -0.00732
+        # Residual gyro bias correction in rad/s (applied before GTSAM estimation).
+        # Keep at 0.0 unless the BNO055 gyro consistently reads a large offset
+        # when stationary — GTSAM handles small residual biases automatically.
+        self.gyro_bias_x = 0.0
         self.gyro_bias_y = 0.0
         self.gyro_bias_z = 0.0
 
