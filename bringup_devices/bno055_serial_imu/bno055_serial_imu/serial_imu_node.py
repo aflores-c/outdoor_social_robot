@@ -12,7 +12,7 @@ class BNO055SerialImuNode(Node):
         super().__init__("bno055_serial_imu_node")
 
         self.declare_parameter("port", "/dev/ttyACM0")
-        self.declare_parameter("baudrate", 460800)
+        self.declare_parameter("baudrate", 115200)
         self.declare_parameter("frame_id", "imu_link")
         self.declare_parameter("topic_name", "/imu/data")
 

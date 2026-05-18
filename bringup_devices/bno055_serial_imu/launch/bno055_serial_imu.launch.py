@@ -21,7 +21,7 @@ def generate_launch_description():
         parameters=[
             {
                 'port': LaunchConfiguration('port'),
-                'baudrate': 115200,
+                'baudrate': 460800,
                 'frame_id': 'imu_link',
                 'topic_name': '/imu/data'
             }
