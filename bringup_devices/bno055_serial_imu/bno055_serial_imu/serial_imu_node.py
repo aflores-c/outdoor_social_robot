@@ -13,14 +13,16 @@ class BNO055SerialImuNode(Node):
         super().__init__("bno055_serial_imu_node")
 
         self.declare_parameter("port", "/dev/ttyACM0")
-        self.declare_parameter("baudrate", 115200)
+        self.declare_parameter("baudrate", 460800)
         self.declare_parameter("frame_id", "imu_link")
         self.declare_parameter("topic_name", "/imu/data")
+        self.declare_parameter("debug_serial", True)
 
         self.port = self.get_parameter("port").value
         self.baudrate = int(self.get_parameter("baudrate").value)
         self.frame_id = self.get_parameter("frame_id").value
         self.topic_name = self.get_parameter("topic_name").value
+        self.debug_serial = bool(self.get_parameter("debug_serial").value)
 
         self.pub = self.create_publisher(Imu, self.topic_name, 50)
 
@@ -32,9 +34,6 @@ class BNO055SerialImuNode(Node):
 
         self.serial_port.reset_input_buffer()
         self.buffer = ""
-        # Offset between ROS clock and Arduino clock, computed once on first message.
-        # Keeps the precise relative timing from the Arduino (10ms resolution at 100Hz)
-        # while anchoring it to the ROS time base.
         self._clock_offset_ns = None
 
         self.get_logger().info(f"Connected to {self.port} at {self.baudrate}")
@@ -63,11 +62,15 @@ class BNO055SerialImuNode(Node):
 
         values = line.split(",")
 
+        if self.debug_serial:
+            self.get_logger().info(f"RAW SERIAL: {line}")
+
         if len(values) != 11:
             return
 
         try:
             arduino_ms = int(float(values[0]))
+
             qx = float(values[1])
             qy = float(values[2])
             qz = float(values[3])
@@ -84,14 +87,15 @@ class BNO055SerialImuNode(Node):
         except ValueError:
             return
 
-        # Anchor Arduino's monotonic clock to ROS time on the first message.
-        # All subsequent stamps use the Arduino's precise relative timing.
         arduino_ns = arduino_ms * 1_000_000
         ros_now_ns = self.get_clock().now().nanoseconds
+
         if self._clock_offset_ns is None:
             self._clock_offset_ns = ros_now_ns - arduino_ns
+            self.get_logger().info("Clock offset initialized")
 
         stamped_ns = self._clock_offset_ns + arduino_ns
+
         msg = Imu()
         msg.header.stamp = rclpy.time.Time(nanoseconds=stamped_ns).to_msg()
         msg.header.frame_id = self.frame_id
@@ -132,8 +136,14 @@ class BNO055SerialImuNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
+
     node = BNO055SerialImuNode()
-    rclpy.spin(node)
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+
     node.destroy_node()
     rclpy.shutdown()
 
