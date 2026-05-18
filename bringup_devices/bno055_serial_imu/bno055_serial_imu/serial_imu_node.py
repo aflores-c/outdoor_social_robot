@@ -3,6 +3,7 @@
 import serial
 
 import rclpy
+import rclpy.time
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 
@@ -31,6 +32,10 @@ class BNO055SerialImuNode(Node):
 
         self.serial_port.reset_input_buffer()
         self.buffer = ""
+        # Offset between ROS clock and Arduino clock, computed once on first message.
+        # Keeps the precise relative timing from the Arduino (10ms resolution at 100Hz)
+        # while anchoring it to the ROS time base.
+        self._clock_offset_ns = None
 
         self.get_logger().info(f"Connected to {self.port} at {self.baudrate}")
 
@@ -62,6 +67,7 @@ class BNO055SerialImuNode(Node):
             return
 
         try:
+            arduino_ms = int(float(values[0]))
             qx = float(values[1])
             qy = float(values[2])
             qz = float(values[3])
@@ -78,8 +84,16 @@ class BNO055SerialImuNode(Node):
         except ValueError:
             return
 
+        # Anchor Arduino's monotonic clock to ROS time on the first message.
+        # All subsequent stamps use the Arduino's precise relative timing.
+        arduino_ns = arduino_ms * 1_000_000
+        ros_now_ns = self.get_clock().now().nanoseconds
+        if self._clock_offset_ns is None:
+            self._clock_offset_ns = ros_now_ns - arduino_ns
+
+        stamped_ns = self._clock_offset_ns + arduino_ns
         msg = Imu()
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp = rclpy.time.Time(nanoseconds=stamped_ns).to_msg()
         msg.header.frame_id = self.frame_id
 
         msg.orientation.x = qx
