@@ -1,0 +1,41 @@
+segmentation_node:
+  ros__parameters:
+
+    # ── Camera ───────────────────────────────────────────────────────────────
+    image_topic: "/camera/color/image_raw"
+
+    # ── Device ───────────────────────────────────────────────────────────────
+    device:    "cuda:0"    # GeForce RTX — single GPU index 0
+    use_half:  false       # FP32 on desktop RTX is fast enough; set true to
+                           # save VRAM if running other models simultaneously
+
+    # ── YOLO (instance segmentation — discrete objects) ──────────────────────
+    # yolov8n-seg : nano  — fastest (~15 ms on RTX 3080)
+    # yolov8s-seg : small — better accuracy (~25 ms)
+    # yolov8m-seg : medium — good balance (~45 ms)
+    yolo_model:    "yolov8s-seg.pt"   # downloads automatically on first run
+    yolo_conf:     0.40               # detection confidence threshold
+    yolo_img_size: 640                # inference resolution (square)
+    yolo_rate_hz:  10.0               # Hz — YOLO runs at this rate
+
+    # COCO class ID → SemanticClass ID remapping (flat pairs)
+    yolo_class_map: [
+       0,  7,   # person      → PEDESTRIAN
+       1,  9,   # bicycle     → BICYCLE
+       2,  8,   # car         → VEHICLE
+       3,  9,   # motorcycle  → BICYCLE
+       5,  8,   # bus         → VEHICLE
+       7,  8,   # truck       → VEHICLE
+    ]
+
+    # ── SegFormer (semantic segmentation — surfaces) ──────────────────────────
+    use_segformer: true
+
+    # b0 = fastest (≈30 ms on RTX), b2 = better (≈70 ms), b5 = best (≈120 ms)
+    segformer_model:    "nvidia/segformer-b2-finetuned-cityscapes-512-1024"
+    segformer_width:    1024     # inference width  (model trained at 1024)
+    segformer_height:   512      # inference height (model trained at 512)
+    segformer_rate_hz:  5.0      # Hz — surfaces change slowly; 3–5 Hz is plenty
+
+    # ── Debug ─────────────────────────────────────────────────────────────────
+    publish_debug: true          # publishes /segmentation/debug_image (coloured)

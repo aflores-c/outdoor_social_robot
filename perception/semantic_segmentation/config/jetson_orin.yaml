@@ -1,0 +1,49 @@
+segmentation_node:
+  ros__parameters:
+
+    # ── Camera ───────────────────────────────────────────────────────────────
+    image_topic: "/camera/color/image_raw"
+
+    # ── Device ───────────────────────────────────────────────────────────────
+    device:   "cuda:0"    # Jetson Orin integrated GPU
+    use_half: true        # FP16 — essential on Jetson; halves latency and VRAM
+
+    # ── YOLO ─────────────────────────────────────────────────────────────────
+    # Option A — PyTorch FP16 (easiest, no export step required)
+    yolo_model:    "yolov8n-seg.pt"   # nano model is sufficient for Jetson
+    #
+    # Option B — TensorRT engine (2–4× faster; run scripts/export_tensorrt.py first)
+    # yolo_model: "/path/to/yolov8n-seg.engine"
+
+    yolo_conf:     0.35
+    yolo_img_size: 480      # reduced from 640 to ease GPU load on Jetson
+    yolo_rate_hz:  8.0
+
+    yolo_class_map: [
+       0,  7,   # person      → PEDESTRIAN
+       1,  9,   # bicycle     → BICYCLE
+       2,  8,   # car         → VEHICLE
+       3,  9,   # motorcycle  → BICYCLE
+       5,  8,   # bus         → VEHICLE
+       7,  8,   # truck       → VEHICLE
+    ]
+
+    # ── SegFormer ─────────────────────────────────────────────────────────────
+    use_segformer: true
+
+    # b0 is the only practical choice on Jetson without TensorRT export
+    segformer_model:    "nvidia/segformer-b0-finetuned-cityscapes-512-1024"
+    segformer_width:    640     # reduced from 1024; good tradeoff on Jetson
+    segformer_height:   320     # reduced from 512
+    segformer_rate_hz:  2.0     # slower rate to keep GPU headroom for YOLO
+
+    # ── Debug ─────────────────────────────────────────────────────────────────
+    publish_debug: false     # disable debug image to save bandwidth on Jetson
+
+    # ── Jetson tips ───────────────────────────────────────────────────────────
+    # 1. Set Jetson power mode to MAXN before running:
+    #      sudo nvpmodel -m 0 && sudo jetson_clocks
+    # 2. For maximum performance, export both models to TensorRT:
+    #      ros2 run semantic_segmentation export_tensorrt
+    # 3. Then point yolo_model to the generated .engine file above.
+    # 4. SegFormer TensorRT export: see scripts/export_tensorrt.py --model segformer

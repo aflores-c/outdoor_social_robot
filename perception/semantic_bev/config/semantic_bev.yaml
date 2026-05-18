@@ -1,0 +1,64 @@
+semantic_bev_node:
+  ros__parameters:
+
+    # ── Frame IDs ────────────────────────────────────────────────────────────
+    # odom_frame should match FAST-LIO's world frame ('camera_init' by default)
+    odom_frame:   "camera_init"
+    base_frame:   "base_link"
+    camera_frame: "camera_link"
+    lidar_frame:  "velodyne"
+
+    # ── Input topics ──────────────────────────────────────────────────────────
+    lidar_topic:         "/velodyne_points"
+    fastlio_cloud_topic: "/cloud_registered"   # or /Laser_map, /fast_lio/map
+    depth_topic:         "/camera/depth/image_raw"
+    seg_mask_topic:      "/yolo/seg_mask"       # uint8 image, pixel = class ID
+    cam_info_topic:      "/camera/color/camera_info"
+
+    # ── BEV map parameters ────────────────────────────────────────────────────
+    resolution:    0.1      # metres per cell
+    map_width_m:  40.0      # local map total x-extent (centred on robot)
+    map_height_m: 40.0      # local map total y-extent (centred on robot)
+    update_rate:   5.0      # Hz — main fusion + publish rate
+
+    # ── Height filtering (in odom/world frame, metres) ───────────────────────
+    # Points at or below ground_z_max are treated as ground → discarded.
+    # Points above obstacle_z_max are discarded (buildings, canopy, etc.).
+    ground_z_max:   0.10
+    obstacle_z_max: 2.50
+
+    # ── LiDAR range gate ─────────────────────────────────────────────────────
+    # LiDAR returns beyond this distance are discarded before projection.
+    # VLP-32 reliable range is ~80 m outdoors.
+    lidar_max_range_m: 80.0
+
+    # ── Segmentation mask timing ──────────────────────────────────────────────
+    # Accept a seg_mask if its age relative to the depth frame is within this.
+    seg_time_tol_s: 0.5      # seconds
+
+    # ── YOLO class remapping ──────────────────────────────────────────────────
+    # Set use_yolo_class_map: true when the seg_mask pixel values are your
+    # YOLO model's native class IDs and need remapping to SemanticClass IDs.
+    # Set false if the mask already contains SemanticClass IDs directly.
+    use_yolo_class_map: true
+
+    # Flat list of pairs: [yolo_id, semantic_id, yolo_id, semantic_id, ...]
+    # Semantic IDs:
+    #   0=UNKNOWN  1=FREE    2=OBSTACLE  3=SIDEWALK   4=ROAD
+    #   5=CROSSWALK  6=GRASS  7=PEDESTRIAN  8=VEHICLE  9=BICYCLE  10=CURB
+    #
+    # Default mapping uses COCO class IDs (YOLOv8 default):
+    yolo_class_map: [
+       0,  7,   # person       → PEDESTRIAN
+       1,  9,   # bicycle      → BICYCLE
+       2,  8,   # car          → VEHICLE
+       3,  9,   # motorcycle   → BICYCLE
+       5,  8,   # bus          → VEHICLE
+       7,  8,   # truck        → VEHICLE
+      # Add sidewalk/road/grass mappings if using a semantic seg model:
+      # 12, 3,  # sidewalk     → SIDEWALK  (ADE20K / Cityscapes mapping)
+      # 13, 4,  # road         → ROAD
+      # 18, 5,  # crosswalk    → CROSSWALK
+      # 9,  6,  # grass/field  → GRASS
+      # 6, 10,  # curb         → CURB
+    ]
