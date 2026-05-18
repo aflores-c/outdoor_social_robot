@@ -36,7 +36,7 @@ def generate_launch_description():
         name='imu_static_tf',
 
         arguments=[
-            '0.0', '0.0', '0.24',   # x y z (meters)
+            '0.0', '0.0', '0.33',   # x y z (meters)
             '0.0', '0.0', '0.0',    # roll pitch yaw (radians)
             'base_link',
             'imu_link'
