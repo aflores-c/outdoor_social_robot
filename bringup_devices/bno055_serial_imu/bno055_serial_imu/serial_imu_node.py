@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import math
 import serial
 
 import rclpy
@@ -19,8 +18,6 @@ class BNO055SerialImuNode(Node):
         self.declare_parameter("topic_name", "/imu/data")
         self.declare_parameter("debug_serial", False)
 
-        # Scale correction for BNO055 accel magnitude
-        # Your measured gravity ≈ 9.41, expected ≈ 9.80511
         self.declare_parameter("accel_scale", 1.042)
 
         self.port = self.get_parameter("port").value
@@ -29,6 +26,11 @@ class BNO055SerialImuNode(Node):
         self.topic_name = self.get_parameter("topic_name").value
         self.debug_serial = bool(self.get_parameter("debug_serial").value)
         self.accel_scale = float(self.get_parameter("accel_scale").value)
+
+        # Hardcoded gyro bias correction in rad/s.
+        self.gyro_bias_x = -0.00732
+        self.gyro_bias_y = 0.0
+        self.gyro_bias_z = 0.0
 
         self.pub = self.create_publisher(Imu, self.topic_name, 50)
 
@@ -44,6 +46,10 @@ class BNO055SerialImuNode(Node):
 
         self.get_logger().info(f"Connected to {self.port} at {self.baudrate}")
         self.get_logger().info(f"Using accel_scale: {self.accel_scale}")
+        self.get_logger().info(
+            f"Using gyro bias correction: "
+            f"x={self.gyro_bias_x}, y={self.gyro_bias_y}, z={self.gyro_bias_z}"
+        )
 
         self.timer = self.create_timer(0.001, self.read_serial)
 
@@ -83,9 +89,13 @@ class BNO055SerialImuNode(Node):
             qz = float(values[3])
             qw = float(values[4])
 
-            gx = float(values[5])
-            gy = float(values[6])
-            gz = float(values[7])
+            raw_gx = float(values[5])
+            raw_gy = float(values[6])
+            raw_gz = float(values[7])
+
+            gx = raw_gx - self.gyro_bias_x
+            gy = raw_gy - self.gyro_bias_y
+            gz = raw_gz - self.gyro_bias_z
 
             ax = float(values[8]) * self.accel_scale
             ay = float(values[9]) * self.accel_scale
