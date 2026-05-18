@@ -38,8 +38,8 @@
     #imuGyrBiasN: 3.5640318696367613e-05
     imuAccNoise: 0.05
     imuGyrNoise: 0.01
-    imuAccBiasN: 0.001
-    imuGyrBiasN: 0.001
+    imuAccBiasN: 0.002
+    imuGyrBiasN: 0.01
 
     imuGravity: 9.80511
     imuRPYWeight: 0.01
