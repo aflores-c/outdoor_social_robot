@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 import serial
 
 import rclpy
@@ -16,13 +17,18 @@ class BNO055SerialImuNode(Node):
         self.declare_parameter("baudrate", 460800)
         self.declare_parameter("frame_id", "imu_link")
         self.declare_parameter("topic_name", "/imu/data")
-        self.declare_parameter("debug_serial", True)
+        self.declare_parameter("debug_serial", False)
+
+        # Scale correction for BNO055 accel magnitude
+        # Your measured gravity ≈ 9.41, expected ≈ 9.80511
+        self.declare_parameter("accel_scale", 1.042)
 
         self.port = self.get_parameter("port").value
         self.baudrate = int(self.get_parameter("baudrate").value)
         self.frame_id = self.get_parameter("frame_id").value
         self.topic_name = self.get_parameter("topic_name").value
         self.debug_serial = bool(self.get_parameter("debug_serial").value)
+        self.accel_scale = float(self.get_parameter("accel_scale").value)
 
         self.pub = self.create_publisher(Imu, self.topic_name, 50)
 
@@ -37,6 +43,7 @@ class BNO055SerialImuNode(Node):
         self._clock_offset_ns = None
 
         self.get_logger().info(f"Connected to {self.port} at {self.baudrate}")
+        self.get_logger().info(f"Using accel_scale: {self.accel_scale}")
 
         self.timer = self.create_timer(0.001, self.read_serial)
 
@@ -80,9 +87,9 @@ class BNO055SerialImuNode(Node):
             gy = float(values[6])
             gz = float(values[7])
 
-            ax = float(values[8])
-            ay = float(values[9])
-            az = float(values[10])
+            ax = float(values[8]) * self.accel_scale
+            ay = float(values[9]) * self.accel_scale
+            az = float(values[10]) * self.accel_scale
 
         except ValueError:
             return
@@ -136,7 +143,6 @@ class BNO055SerialImuNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-
     node = BNO055SerialImuNode()
 
     try:
