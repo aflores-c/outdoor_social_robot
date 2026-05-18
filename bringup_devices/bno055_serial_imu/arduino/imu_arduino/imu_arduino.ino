@@ -40,6 +40,15 @@ void setup()
   delay(1000);
 
   bno.setExtCrystalUse(true);
+
+  // Wait until gyroscope and accelerometer are fully calibrated (status == 3).
+  // Move the sensor through several orientations to calibrate the accelerometer;
+  // keep it still for a few seconds for the gyroscope.
+  uint8_t sys, gyro, accel, mag;
+  do {
+    bno.getCalibration(&sys, &gyro, &accel, &mag);
+    delay(100);
+  } while (gyro < 3 || accel < 3);
 }
 
 void loop()
