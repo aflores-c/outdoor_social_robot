@@ -1,0 +1,4 @@
+velodyne_transform_node:
+  ros__parameters:
+    organize_cloud: false
+    view_width: 2.0

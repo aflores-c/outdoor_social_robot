@@ -51,7 +51,10 @@ def generate_launch_description():
         output='screen',
         parameters=[
             driver_params,
-            {'device_ip': device_ip}
+            {
+                'device_ip': device_ip,
+                'rpm': 600.0,
+            }
         ]
     )
 
@@ -59,11 +62,18 @@ def generate_launch_description():
     # Velodyne Transform
     # -------------------------
     pointcloud_share = get_package_share_directory('velodyne_pointcloud')
+    bringup_share = get_package_share_directory('velodyne_vlp32c_bringup')
 
     transform_params = os.path.join(
         pointcloud_share,
         'config',
         'VLP32C-velodyne_transform_node-params.yaml'
+    )
+
+    transform_override = os.path.join(
+        bringup_share,
+        'config',
+        'velodyne_transform_override.yaml'
     )
 
     calibration_file = os.path.join(
@@ -78,9 +88,10 @@ def generate_launch_description():
         output='screen',
         parameters=[
             transform_params,
+            transform_override,
             {
                 'calibration': calibration_file,
-                'frame_id': frame_id
+                'frame_id': frame_id,
             }
         ]
     )
