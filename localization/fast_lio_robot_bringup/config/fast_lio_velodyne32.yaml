@@ -46,6 +46,7 @@
             scan_publish_en: true
             dense_publish_en: true
             scan_bodyframe_pub_en: true
+            map_en: true                # publishes /Laser_map (full accumulated map)
 
         pcd_save:
             pcd_save_en: false
