@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import math
 import serial
 
 import rclpy
@@ -13,48 +12,56 @@ class BNO055SerialImuNode(Node):
         super().__init__("bno055_serial_imu_node")
 
         self.declare_parameter("port", "/dev/ttyACM0")
-        self.declare_parameter("baudrate", 115200)
+        self.declare_parameter("baudrate", 460800)
         self.declare_parameter("frame_id", "imu_link")
         self.declare_parameter("topic_name", "/imu/data")
 
         self.port = self.get_parameter("port").value
-        self.baudrate = self.get_parameter("baudrate").value
+        self.baudrate = int(self.get_parameter("baudrate").value)
         self.frame_id = self.get_parameter("frame_id").value
         self.topic_name = self.get_parameter("topic_name").value
 
-        self.pub = self.create_publisher(Imu, self.topic_name, 20)
+        self.pub = self.create_publisher(Imu, self.topic_name, 50)
 
-        try:
-            self.serial_port = serial.Serial(
-                self.port,
-                self.baudrate,
-                timeout=0.02
-            )
-            self.get_logger().info(f"Connected to {self.port} at {self.baudrate}")
-        except serial.SerialException as e:
-            self.get_logger().error(f"Could not open serial port: {e}")
-            raise e
+        self.serial_port = serial.Serial(
+            self.port,
+            self.baudrate,
+            timeout=0.0
+        )
+
+        self.serial_port.reset_input_buffer()
+        self.buffer = ""
+
+        self.get_logger().info(f"Connected to {self.port} at {self.baudrate}")
 
         self.timer = self.create_timer(0.001, self.read_serial)
 
     def read_serial(self):
         try:
-            line = self.serial_port.readline().decode("utf-8").strip()
+            data = self.serial_port.read(self.serial_port.in_waiting or 1)
 
-            if not line:
+            if not data:
                 return
 
-            if line.startswith("time") or line.startswith("Format"):
-                return
+            self.buffer += data.decode("utf-8", errors="ignore")
 
-            values = line.split(",")
+            while "\n" in self.buffer:
+                line, self.buffer = self.buffer.split("\n", 1)
+                self.parse_line(line.strip())
 
-            if len(values) != 11:
-                self.get_logger().warn(f"Bad line: {line}")
-                return
+        except Exception as e:
+            self.get_logger().warn(f"Serial read error: {e}")
 
-            time_ms = float(values[0])
+    def parse_line(self, line):
+        if not line:
+            return
 
+        values = line.split(",")
+
+        if len(values) != 11:
+            return
+
+        try:
             qx = float(values[1])
             qy = float(values[2])
             qz = float(values[3])
@@ -68,45 +75,45 @@ class BNO055SerialImuNode(Node):
             ay = float(values[9])
             az = float(values[10])
 
-            msg = Imu()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.header.frame_id = self.frame_id
+        except ValueError:
+            return
 
-            msg.orientation.x = qx
-            msg.orientation.y = qy
-            msg.orientation.z = qz
-            msg.orientation.w = qw
+        msg = Imu()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.frame_id
 
-            msg.angular_velocity.x = gx
-            msg.angular_velocity.y = gy
-            msg.angular_velocity.z = gz
+        msg.orientation.x = qx
+        msg.orientation.y = qy
+        msg.orientation.z = qz
+        msg.orientation.w = qw
 
-            msg.linear_acceleration.x = ax
-            msg.linear_acceleration.y = ay
-            msg.linear_acceleration.z = az
+        msg.angular_velocity.x = gx
+        msg.angular_velocity.y = gy
+        msg.angular_velocity.z = gz
 
-            msg.orientation_covariance = [
-                0.01, 0.0, 0.0,
-                0.0, 0.01, 0.0,
-                0.0, 0.0, 0.05
-            ]
+        msg.linear_acceleration.x = ax
+        msg.linear_acceleration.y = ay
+        msg.linear_acceleration.z = az
 
-            msg.angular_velocity_covariance = [
-                0.001, 0.0, 0.0,
-                0.0, 0.001, 0.0,
-                0.0, 0.0, 0.001
-            ]
+        msg.orientation_covariance = [
+            0.01, 0.0, 0.0,
+            0.0, 0.01, 0.0,
+            0.0, 0.0, 0.05
+        ]
 
-            msg.linear_acceleration_covariance = [
-                0.05, 0.0, 0.0,
-                0.0, 0.05, 0.0,
-                0.0, 0.0, 0.05
-            ]
+        msg.angular_velocity_covariance = [
+            0.001, 0.0, 0.0,
+            0.0, 0.001, 0.0,
+            0.0, 0.0, 0.001
+        ]
 
-            self.pub.publish(msg)
+        msg.linear_acceleration_covariance = [
+            0.05, 0.0, 0.0,
+            0.0, 0.05, 0.0,
+            0.0, 0.0, 0.05
+        ]
 
-        except Exception as e:
-            self.get_logger().warn(f"Serial parse error: {e}")
+        self.pub.publish(msg)
 
 
 def main(args=None):
