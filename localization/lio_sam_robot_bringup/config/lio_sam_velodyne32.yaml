@@ -32,13 +32,18 @@
     lidarMaxRange: 100.0
 
     # IMU noise - initial values, tune later
-    imuAccNoise: 3.9939570888238808e-03
-    imuGyrNoise: 1.5636343949698187e-03
-    imuAccBiasN: 6.4356659353532566e-05
-    imuGyrBiasN: 3.5640318696367613e-05
+    #imuAccNoise: 3.9939570888238808e-03
+    #imuGyrNoise: 1.5636343949698187e-03
+    #imuAccBiasN: 6.4356659353532566e-05
+    #imuGyrBiasN: 3.5640318696367613e-05
+    imuAccNoise: 0.05
+    imuGyrNoise: 0.01
+    imuAccBiasN: 0.001
+    imuGyrBiasN: 0.001
 
     imuGravity: 9.80511
     imuRPYWeight: 0.01
+    #imuRPYWeight: 0.00
 
     # IMPORTANT:
     # These are LiDAR-IMU extrinsics used internally by LIO-SAM.
@@ -64,7 +69,7 @@
     mappingCornerLeafSize: 0.2
     mappingSurfLeafSize: 0.4
 
-    # 2D robot constraints disabled initially
+    # Disabled for 3D outdoor operation; tighten only after IMU is calibrated
     z_tollerance: 1000.0
     rotation_tollerance: 1000.0
 
@@ -79,7 +84,8 @@
     surroundingKeyframeSearchRadius: 50.0
 
     # Loop closure
-    loopClosureEnableFlag: true
+    #loopClosureEnableFlag: true
+    loopClosureEnableFlag: false
     loopClosureFrequency: 1.0
     surroundingKeyframeSize: 50
     historyKeyframeSearchRadius: 15.0
