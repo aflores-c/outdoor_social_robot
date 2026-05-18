@@ -133,7 +133,7 @@ def generate_launch_description():
         velodyne_driver_node,
         velodyne_transform_node,
         velodyne_laserscan_node,
-        #static_transform_node,
+        static_transform_node,
         RegisterEventHandler(
             OnProcessExit(
                 target_action=velodyne_driver_node,
