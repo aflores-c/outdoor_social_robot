@@ -1,0 +1,11 @@
+# Goal
+float64 x        # target x position in map frame (meters)
+float64 y        # target y position in map frame (meters)
+float64 phi      # target orientation in map frame (degrees)
+---
+# Result
+bool success
+string message
+---
+# Feedback
+float64 distance_remaining
