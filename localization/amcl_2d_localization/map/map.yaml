@@ -1,0 +1,13 @@
+# Map metadata file — edit to match your saved map.
+# Place the corresponding map.pgm (or map.png) in this same folder.
+#
+# To save a map while LIO-SAM / FAST-LIO is running:
+#   ros2 run nav2_map_server map_saver_cli -f ~/map
+# Then copy map.pgm and map.yaml here.
+
+image: map.pgm          # filename of the occupancy image (relative to this file)
+resolution: 0.05        # metres per pixel
+origin: [0.0, 0.0, 0.0] # [x, y, yaw] of the bottom-left pixel in the map frame
+negate: 0               # 0 = white is free, black is occupied
+occupied_thresh: 0.65
+free_thresh: 0.196

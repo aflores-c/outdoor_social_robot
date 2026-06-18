@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amcl_2d_localization</name>
+  <version>0.0.1</version>
+  <description>2D AMCL localization bringup: map_server + amcl + lifecycle_manager</description>
+  <maintainer email="andy.flores@pucp.edu.pe">Andy Flores</maintainer>
+  <license>MIT</license>
+
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>nav2_amcl</depend>
+  <depend>nav2_map_server</depend>
+  <depend>nav2_lifecycle_manager</depend>
+  <depend>slam_toolbox</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

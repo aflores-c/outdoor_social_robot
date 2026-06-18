@@ -1,0 +1,62 @@
+amcl:
+  ros__parameters:
+    use_sim_time: false
+
+    # Odometry model
+    robot_model_type: "nav2_amcl::OmniMotionModel"
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+
+    # Particle filter
+    max_particles: 10000
+    min_particles: 500
+    pf_err: 0.05
+    pf_z: 0.99
+    update_min_a: 0.2
+    update_min_d: 0.01
+    resample_interval: 1
+
+    # Laser measurement model
+    laser_model_type: "likelihood_field"
+    laser_max_range: -1.0
+    laser_min_range: -1.0
+    max_beams: 30
+    z_hit: 0.5
+    z_max: 0.05
+    z_rand: 0.5
+    z_short: 0.05
+    sigma_hit: 0.2
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 2.0
+
+    # likelihood_field_prob specific
+    do_beamskip: false
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+
+    # Update / rate
+    transform_tolerance: 0.27
+
+    # Recovery
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+
+    # Frames
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    global_frame_id: "map"
+    scan_topic: "/scan_outdoor"
+
+    # Initial pose
+    save_pose_rate: 0.5
+    tf_broadcast: true
+    set_initial_pose: false
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
