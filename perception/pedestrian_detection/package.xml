@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pedestrian_detection</name>
+  <version>0.1.0</version>
+  <description>
+    Pedestrian detection and 3D pose estimation for outdoor robots.
+    Uses YOLOv8 for 2D detection and the calibrated LiDAR-camera transform
+    to back-project LiDAR points into detected bounding boxes, producing
+    accurate (x, y, z) positions in the velodyne frame.
+  </description>
+  <maintainer email="andy.flores@pucp.edu.pe">Andy Flores</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>message_filters</depend>
+  <depend>tf2_ros</depend>
+  <depend>lidar_camera_calibration</depend>
+  <depend>velodyne_vlp32c_bringup</depend>
+  <depend>realsense2_camera</depend>
+
+  <depend>python3-numpy</depend>
+  <depend>python3-opencv</depend>
+  <depend>python3-yaml</depend>
+  <!-- ultralytics + torch installed via pip — see setup instructions -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

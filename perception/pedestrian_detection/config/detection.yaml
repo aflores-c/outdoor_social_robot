@@ -1,0 +1,30 @@
+pedestrian_detector_node:
+  ros__parameters:
+
+    # ── Sensor topics ─────────────────────────────────────────────────────
+    rgb_topic:         "/camera/realsense2_camera/color/image_raw"
+    camera_info_topic: "/camera/realsense2_camera/color/camera_info"
+    lidar_topic:       "/velodyne_points"
+
+    # ── Calibration ───────────────────────────────────────────────────────
+    # Leave empty to use the installed package result (recommended)
+    calibration_file: ""
+
+    # ── YOLO ─────────────────────────────────────────────────────────────
+    # yolov8n.pt  → fastest, ~60fps on Jetson Orin
+    # yolov8s.pt  → better accuracy, ~40fps
+    # yolov8n.engine (TensorRT) → use after: yolo export model=yolov8n.pt format=engine
+    yolo_model:  "yolov8n.pt"
+    confidence:  0.40
+
+    # ── Pose extraction ───────────────────────────────────────────────────
+    # Minimum LiDAR returns inside a bounding box to accept the pose
+    min_lidar_points: 5
+    # Discard LiDAR returns beyond this range (metres)
+    max_range_m: 20.0
+
+    # ── TF frame for published poses and markers ──────────────────────────
+    lidar_frame: "velodyne"
+
+    # ── Synchronisation ───────────────────────────────────────────────────
+    sync_slop_s: 0.10
