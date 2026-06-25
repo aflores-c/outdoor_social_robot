@@ -1,0 +1,79 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Lidar-Camera Extrinsic Calibration — parameter file
+#
+# Shared by collect_samples_node and validate_projection_node.
+# Edit board dimensions to match your printed ChArUco board.
+# Edit lidar_roi to mask out floors/walls and keep only the board region.
+# ──────────────────────────────────────────────────────────────────────────────
+
+collect_samples_node:
+  ros__parameters:
+
+    # ── Sensor topics ────────────────────────────────────────────────────────
+    image_topic:       "/camera/realsense2_camera/color/image_raw"
+    camera_info_topic: "/camera/realsense2_camera/color/camera_info"
+    lidar_topic:       "/velodyne_points"
+
+    # ── ChArUco board dimensions  ─────────────────────────────────────────────
+    # These MUST match the board you printed.
+    # Print the board with:
+    #   python3 -c "
+    #     import cv2, cv2.aruco as a
+    #     d = a.Dictionary_get(a.DICT_4X4_50)
+    #     b = a.CharucoBoard_create(5,7,0.10,0.075,d)
+    #     img = b.draw((1000,1400))
+    #     cv2.imwrite('charuco_board.png', img)
+    #   "
+    board:
+      squares_x:      5        # columns of chessboard squares
+      squares_y:      7        # rows of chessboard squares
+      square_size_m:  0.10     # physical square side (metres) — measure after printing
+      marker_size_m:  0.075    # physical ArUco marker side (metres, inside each square)
+      aruco_dict:     "DICT_4X4_50"
+
+    # ── LiDAR region-of-interest (velodyne frame, metres) ────────────────────
+    # Crop the point cloud to the region where you will hold the board.
+    # Keep the box tight to avoid accidentally fitting the ground plane.
+    # Typical outdoor setup: board at 2–5 m in front, elevated to avoid ground.
+    lidar_roi:
+      x_min:  1.5    # minimum distance in front of LiDAR
+      x_max:  3.5    # maximum distance in front of LiDAR
+      y_min: -0.5    # left extent
+      y_max:  0.5    # right extent
+      z_min: -0.8    # board is ~0.5m below LiDAR at 2m distance (-14 deg elevation, within VLP-32C FOV)
+      z_max:  0.5    # above LiDAR
+
+    # ── RANSAC plane fitting ─────────────────────────────────────────────────
+    ransac:
+      distance_threshold_m: 0.02    # 2 cm inlier band
+      max_iterations:       1000
+      min_inliers:          80      # reject if too few points hit the board
+
+    # ── Synchronisation ───────────────────────────────────────────────────────
+    sync_slop_s: 0.05    # ApproximateTimeSynchronizer tolerance (seconds)
+
+    # ── Collection ────────────────────────────────────────────────────────────
+    min_samples:              6     # warn if fewer samples collected before estimating
+    # auto_capture_interval_s: -1   # -1 = disabled; set e.g. 5.0 for auto-capture every 5 s
+    auto_capture_interval_s: 5.0
+
+    # ── Output ────────────────────────────────────────────────────────────────
+    # Leave empty to use default: ~/.ros/lidar_camera_calibration/samples.json
+    output_file: ""
+
+
+validate_projection_node:
+  ros__parameters:
+
+    # ── Sensor topics ────────────────────────────────────────────────────────
+    image_topic:       "/camera/realsense2_camera/color/image_raw"
+    camera_info_topic: "/camera/realsense2_camera/color/camera_info"
+    lidar_topic:       "/velodyne_points"
+
+    # ── Calibration result ────────────────────────────────────────────────────
+    # Leave empty to use default: ~/.ros/lidar_camera_calibration/lidar_to_camera.yaml
+    result_file: ""
+
+    sync_slop_s:   0.10    # looser sync for validation
+    max_range_m:   20.0    # discard LiDAR returns beyond this distance
+    point_radius:  2       # projected point dot radius in pixels
