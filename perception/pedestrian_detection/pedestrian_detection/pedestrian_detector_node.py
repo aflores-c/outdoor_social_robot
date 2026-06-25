@@ -50,6 +50,7 @@ class PedestrianDetectorNode(Node):
         self.declare_parameter('sync_slop_s',       0.10)
         self.declare_parameter('lidar_frame',       'velodyne')
         self.declare_parameter('max_range_m',       20.0)
+        self.declare_parameter('debug_fps',         5.0)
 
         rgb_topic   = self.get_parameter('rgb_topic').value
         info_topic  = self.get_parameter('camera_info_topic').value
@@ -60,6 +61,9 @@ class PedestrianDetectorNode(Node):
         self._min_pts       = int(self.get_parameter('min_lidar_points').value)
         self._lidar_frame   = self.get_parameter('lidar_frame').value
         self._max_range     = float(self.get_parameter('max_range_m').value)
+        debug_fps           = float(self.get_parameter('debug_fps').value)
+        self._debug_period  = 1.0 / debug_fps if debug_fps > 0 else 0.0
+        self._last_debug_t  = 0.0
 
         # ── Calibration ───────────────────────────────────────────────────────
         if not cal_file:
@@ -244,7 +248,12 @@ class PedestrianDetectorNode(Node):
         # ── Publish ────────────────────────────────────────────────────────
         self._publish_poses(poses_3d, stamp)
         self._publish_markers(poses_3d, stamp)
-        self._publish_debug(debug_img, stamp)
+
+        # Throttle debug image to save network bandwidth (Jetson → PC)
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if self._debug_period == 0.0 or (now - self._last_debug_t) >= self._debug_period:
+            self._publish_debug(debug_img, stamp)
+            self._last_debug_t = now
 
     # ── Publishers ─────────────────────────────────────────────────────────
 

@@ -26,5 +26,10 @@ pedestrian_detector_node:
     # ── TF frame for published poses and markers ──────────────────────────
     lidar_frame: "velodyne"
 
+    # ── Debug image ───────────────────────────────────────────────────────
+    # Throttled to reduce Jetson→PC bandwidth (1280x720 uncompressed = 82 MB/s at 30fps)
+    # Set to 0.0 to publish every frame (only do this on localhost)
+    debug_fps: 5.0
+
     # ── Synchronisation ───────────────────────────────────────────────────
     sync_slop_s: 0.10
