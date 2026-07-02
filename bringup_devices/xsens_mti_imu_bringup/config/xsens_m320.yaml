@@ -1,0 +1,39 @@
+/**:
+    ros__parameters:
+
+        # Auto-scan all ports — set scan_for_devices: false and fill port/baudrate for fixed setup
+        scan_for_devices: true
+        port: "/dev/ttyUSB0"
+        baudrate: 115200
+
+        device_id: ""         # leave empty to connect to first found device
+
+        enable_logging: false
+        log_file: "xsens.mtb"
+
+        publisher_queue_size: 5
+        frame_id: "imu_link"
+
+        # MTi-M320 outputs: IMU + AHRS (no GPS)
+        pub_imu: true                # /imu/data              (sensor_msgs/Imu)
+        pub_quaternion: true         # /filter/quaternion     (geometry_msgs/QuaternionStamped)
+        pub_mag: true                # /imu/mag               (sensor_msgs/MagneticField)
+        pub_angular_velocity: true   # /imu/angular_velocity  (geometry_msgs/Vector3Stamped)
+        pub_acceleration: true       # /imu/acceleration      (geometry_msgs/Vector3Stamped)
+        pub_free_acceleration: true  # /filter/free_acceleration
+        pub_dq: true                 # /imu/dq                (orientation increments)
+        pub_dv: true                 # /imu/dv                (velocity increments)
+        pub_sampletime: true
+        pub_temperature: true        # /temperature
+        pub_pressure: false          # M320 has no barometer
+        pub_gnss: false              # M320 has no GNSS
+        pub_twist: false
+        pub_transform: false
+        pub_positionLLA: false
+        pub_velocity: false
+
+        # Covariance overrides — leave zeros to use device-reported values
+        linear_acceleration_stddev: [0.0, 0.0, 0.0]   # [m/s^2]
+        angular_velocity_stddev:    [0.0, 0.0, 0.0]   # [rad/s]
+        orientation_stddev:         [0.0, 0.0, 0.0]   # [rad]
+        magnetic_field_stddev:      [0.0, 0.0, 0.0]   # [Tesla]
