@@ -9,7 +9,7 @@
 
     # Frames
     lidarFrame: "velodyne"
-    baselinkFrame: "base_link"
+    baselinkFrame: "base_footprint"
     odometryFrame: "odom"
     mapFrame: "map"
 
