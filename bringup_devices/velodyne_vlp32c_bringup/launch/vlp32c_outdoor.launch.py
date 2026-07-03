@@ -123,12 +123,12 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         arguments=[
-            '--x', '0.03',
+            '--x', '-0.28',
             '--y', '0.0',
-            '--z', '0.36',
+            '--z', '1.66',
             '--roll', '0.0',
             '--pitch', '0.0',
-            '--yaw', '0.00',
+            '--yaw', '3.14159265358979,
             '--frame-id', 'base_link',
             '--child-frame-id', frame_id
         ]
