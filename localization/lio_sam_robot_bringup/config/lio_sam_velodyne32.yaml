@@ -48,7 +48,7 @@
     # IMPORTANT:
     # These are LiDAR-IMU extrinsics used internally by LIO-SAM.
     # Start with identity only if your IMU and LiDAR axes are aligned.
-    extrinsicTrans: [0.0, 0.0, 0.0]
+    extrinsicTrans: [-0.03, 0.0, -0.36]
 
     extrinsicRot: [1.0, 0.0, 0.0,
                    0.0, 1.0, 0.0,
