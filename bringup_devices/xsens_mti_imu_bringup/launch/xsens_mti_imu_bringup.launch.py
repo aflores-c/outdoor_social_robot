@@ -27,7 +27,25 @@ def generate_launch_description():
         parameters=[LaunchConfiguration('config_file')],
     )
 
+    base_link_to_imu_link_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_link_to_imu_link_tf',
+        arguments=[
+            '--x',     '-0.25',
+            '--y',     '0.0',
+            '--z',     '1.7',
+            '--roll',  '0.0',
+            '--pitch', '0.0',
+            '--yaw',   '3.14159265358979',
+            '--frame-id',       'base_link',
+            '--child-frame-id', 'imu_link',
+        ],
+        output='screen'
+    )
+
     return LaunchDescription([
         config_arg,
         imu_node,
+        base_link_to_imu_link_tf,
     ])
