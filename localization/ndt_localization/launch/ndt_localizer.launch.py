@@ -43,7 +43,8 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'map_path',
-            default_value='/home/cas/ndt_map.pcd',
+            default_value=os.path.join(
+                get_package_share_directory('fast_lio_robot_bringup'), 'maps', 'ndt_map.pcd'),
             description='Path to the NDT map PCD (output of ndt_map_creator)'
         ),
         DeclareLaunchArgument(

@@ -4,7 +4,7 @@
         # ── Map ──────────────────────────────────────────────────────────────
         # Path to the pre-processed NDT map PCD (output of ndt_map_creator).
         # Override at launch time:  map_path:=/path/to/ndt_map.pcd
-        map_path: "/home/cas/ndt_map.pcd"
+        map_path: "~/ndt_map.pcd"   # overridden by launch file with Path.home()
 
         # ── TF frames ────────────────────────────────────────────────────────
         map_frame:  "map"

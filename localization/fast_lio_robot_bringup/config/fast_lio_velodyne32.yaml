@@ -7,7 +7,7 @@
         filter_size_map: 0.5         # voxel size for map downsampling (m)
         cube_side_length: 1000.0
         runtime_pos_log_enable: false
-        map_file_path: "/home/cas/fast_lio_map.pcd"
+        map_file_path: "~/fast_lio_map.pcd"   # overridden by launch file with Path.home()
 
         common:
             lid_topic:  "/velodyne_points"

@@ -69,7 +69,8 @@ def generate_launch_description():
         name='fastlio_mapping',
         parameters=[
             LaunchConfiguration('params_file'),
-            {'use_sim_time': LaunchConfiguration('use_sim_time')}
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+            {'map_file_path': os.path.join(bringup_share, 'maps', 'fast_lio_map.pcd')},
         ],
         output='screen'
     )

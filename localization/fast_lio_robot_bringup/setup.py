@@ -16,6 +16,8 @@ setup(
             glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'config'),
             glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'maps'),
+            glob('maps/*.pcd') + glob('maps/.gitkeep')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
