@@ -46,19 +46,19 @@ def generate_launch_description():
     # "body" = imu_link in this robot, so we publish the inverse of base_link→imu_link:
     #   base_link → imu_link : [0, 0, 0.33]  →  body → base_link : [0, 0, -0.33]
     # This connects camera_init → body → base_link → {imu_link, velodyne}
-    body_to_base_link_tf = Node(
+    body_to_base_footprint_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='body_to_base_link_tf',
+        name='body_to_base_footprint_tf',
         arguments=[
-            '--x',     '0.0',
+            '--x',     '-0.25',
             '--y',     '0.0',
-            '--z',     '-0.33',
+            '--z',     '-1.30',
             '--roll',  '0.0',
             '--pitch', '0.0',
-            '--yaw',   '0.0',
+            '--yaw',   '3.14159265358979',
             '--frame-id',       'body',
-            '--child-frame-id', 'base_link',
+            '--child-frame-id', 'base_footprint',
         ],
         output='screen'
     )
@@ -87,7 +87,7 @@ def generate_launch_description():
         use_sim_time_arg,
         rviz_arg,
         rviz_cfg_arg,
-        body_to_base_link_tf,
+        body_to_base_footprint_tf,
         fast_lio_node,
         rviz_node,
     ])
