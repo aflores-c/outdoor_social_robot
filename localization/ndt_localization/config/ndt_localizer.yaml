@@ -1,0 +1,49 @@
+/**:
+    ros__parameters:
+
+        # ── Map ──────────────────────────────────────────────────────────────
+        # Path to the pre-processed NDT map PCD (output of ndt_map_creator).
+        # Override at launch time:  map_path:=/path/to/ndt_map.pcd
+        map_path: "/home/cas/ndt_map.pcd"
+
+        # ── TF frames ────────────────────────────────────────────────────────
+        map_frame:  "map"
+        odom_frame: "odom"
+        base_frame: "base_footprint"
+
+        # ── LiDAR topic ──────────────────────────────────────────────────────
+        scan_topic: "/velodyne_points"
+
+        # ── NDT parameters ───────────────────────────────────────────────────
+        # Resolution: voxel size of the NDT grid (metres).
+        #   Larger  → faster but misses fine structure.
+        #   Smaller → more precise but slower and needs more memory.
+        #   1.0 m is a safe outdoor default with VLP-32C.
+        ndt_resolution: 1.0
+
+        # Newton optimisation step size.  Reduce to 0.05 if NDT oscillates.
+        ndt_step_size: 0.1
+
+        # Convergence tolerance (metres).  Leave at default unless runtime is tight.
+        ndt_epsilon: 0.01
+
+        # Maximum ESIKF iterations per scan.
+        ndt_max_iterations: 35
+
+        # ── Input scan downsampling ───────────────────────────────────────────
+        # VoxelGrid leaf applied to each incoming scan before matching.
+        # 0.3 m keeps enough detail for a VLP-32C while reducing CPU load.
+        input_leaf_size: 0.3
+
+        # ── Convergence quality gate ─────────────────────────────────────────
+        # Scans whose NDT transformation probability is below this threshold
+        # are discarded (pose not updated, TF not published for that scan).
+        # Increase to 1.0 to be more conservative in poor-geometry areas.
+        min_convergence_score: 0.5
+
+        # ── Initial pose ─────────────────────────────────────────────────────
+        # Applied at start-up only if any value is non-zero.
+        # Otherwise wait for a /initialpose message (RViz "2D Pose Estimate").
+        initial_x:   0.0
+        initial_y:   0.0
+        initial_yaw: 0.0
