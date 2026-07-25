@@ -1,0 +1,43 @@
+traffic_object_detector_node:
+  ros__parameters:
+
+    # ── Sensor topics ─────────────────────────────────────────────────────
+    rgb_topic:         "/camera/realsense2_camera/color/image_raw"
+    camera_info_topic: "/camera/realsense2_camera/color/camera_info"
+    lidar_topic:       "/velodyne_points"
+
+    # ── Calibration ───────────────────────────────────────────────────────
+    # Leave empty to use the installed package result (recommended)
+    calibration_file: ""
+
+    # ── YOLO ─────────────────────────────────────────────────────────────
+    # Single pass, classes=[0,2,3,5,7] (person, car, motorcycle, bus, truck)
+    # — see traffic_object_detector_node.ALL_CLASSES
+    # yolov8n.pt  → fastest, ~60fps on Jetson Orin
+    # yolov8s.pt  → better accuracy, ~40fps
+    # yolov8n.engine (TensorRT) → use after: yolo export model=yolov8n.pt format=engine
+    yolo_model:  "yolov8n.pt"
+    confidence:  0.40
+
+    # ── Pose extraction ───────────────────────────────────────────────────
+    # Minimum LiDAR returns inside a bounding box to accept the pose.
+    # Vehicles are larger and typically produce more LiDAR returns.
+    pedestrian_min_lidar_points: 5
+    vehicle_min_lidar_points:    10
+    # Discard LiDAR returns beyond this range (metres)
+    max_range_m: 20.0
+
+    # ── TF frame for published poses and markers ──────────────────────────
+    lidar_frame: "velodyne"
+
+    # ── Debug image ───────────────────────────────────────────────────────
+    # Throttled to reduce Jetson→PC bandwidth (1280x720 uncompressed = 82 MB/s at 30fps)
+    # Set to 0.0 to publish every frame (only do this on localhost)
+    debug_fps: 5.0
+
+    # ── Synchronisation ───────────────────────────────────────────────────
+    sync_slop_s: 0.10
+
+    # ── Output for decision_making/school_traffic_control ─────────────────
+    pedestrians_topic: "/perception/pedestrians"
+    vehicles_topic:    "/perception/vehicles"
