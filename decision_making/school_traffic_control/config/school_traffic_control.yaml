@@ -1,0 +1,48 @@
+school_traffic_control_node:
+  ros__parameters:
+    # Topics published by the perception stack
+    vehicles_topic: /perception/vehicles
+    pedestrians_topic: /perception/pedestrians
+    plate_allowed_topic: /perception/plate_allowed
+
+    # Action servers (base_navigation, play_motion2 and communication_skills bringup)
+    go_to_xy_phi_action: go_to_xy_phi
+    play_motion2_action: play_motion2
+    say_action: /skill/say
+
+    # Pose A — middle of the road, default holding position
+    pose_a_x: 0.0
+    pose_a_y: 0.0
+    pose_a_phi_deg: 0.0
+
+    # Pose B — cleared position used while letting a vehicle pass
+    pose_b_x: 0.0
+    pose_b_y: -3.0
+    pose_b_phi_deg: 0.0
+
+    # Arm gesture motion names — must exist in the play_motion2_mgr
+    # `motions` parameter, see config/arm_motions.yaml
+    motion_default: default_gesture
+    motion_stop: stop_gesture
+    motion_pass: pass_gesture
+
+    # A vehicle triggers the stop gesture once its distance falls in
+    # [range_near_m, range_far_m] meters
+    range_near_m: 2.0
+    range_far_m: 15.0
+
+    # Optional safety gate (off by default): block the pass decision while a
+    # pedestrian is within pedestrian_zone_m, even if the plate is allowed.
+    pedestrian_safety_gate: false
+    pedestrian_zone_m: 5.0
+
+    # Pedestrian alert: within this range, warn verbally via the Say skill.
+    # This never affects base/arm motion — traffic control stays the only
+    # motion-driving task.
+    pedestrian_alert_range_m: 5.0
+    pedestrian_alert_message: "Caution, pedestrian, please stand clear."
+    pedestrian_alert_cooldown_s: 5.0
+
+    # Sensor messages older than this are treated as stale/unknown
+    message_timeout_s: 1.0
+    control_rate_hz: 10.0

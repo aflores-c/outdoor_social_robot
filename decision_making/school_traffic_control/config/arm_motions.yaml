@@ -1,0 +1,47 @@
+# Reference motion definitions for the school_traffic_control gestures.
+#
+# play_motion2 does NOT load motions from this package — the `motions` map
+# is a parameter of the `play_motion2_mgr` node in the play_motion2 bringup
+# (see robot_motion/play_motion2/play_motion2/config). Merge the entries
+# below into that node's parameter file, replacing `joints`/`positions`
+# with the real arm joint names and target positions [rad] for this robot.
+#
+# The motion names here (default_gesture, stop_gesture, pass_gesture) match
+# the school_traffic_control.yaml defaults for motion_default/motion_stop/
+# motion_pass — keep them in sync if you rename either side.
+
+play_motion2_mgr:
+  ros__parameters:
+    motions:
+      default_gesture:
+        joints:
+          - arm_joint_1
+          - arm_joint_2
+        positions: [0.0, 0.0]
+        times_from_start: [1.0]
+        meta:
+          name: 'Default'
+          usage: school_traffic_control
+          description: 'Neutral arm pose, no vehicle in range'
+
+      stop_gesture:
+        joints:
+          - arm_joint_1
+          - arm_joint_2
+        positions: [1.57, 0.0]
+        times_from_start: [1.0]
+        meta:
+          name: 'Stop'
+          usage: school_traffic_control
+          description: 'Arm raised, palm-out stop signal'
+
+      pass_gesture:
+        joints:
+          - arm_joint_1
+          - arm_joint_2
+        positions: [0.0, 1.57]
+        times_from_start: [1.0]
+        meta:
+          name: 'Pass'
+          usage: school_traffic_control
+          description: 'Arm sweep signalling the vehicle to proceed'
