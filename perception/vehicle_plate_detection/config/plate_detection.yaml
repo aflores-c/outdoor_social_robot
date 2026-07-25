@@ -1,0 +1,26 @@
+plate_detector_node:
+  ros__parameters:
+
+    # ── Sensor topic ─────────────────────────────────────────────────────
+    rgb_topic: "/camera/realsense2_camera/color/image_raw"
+
+    # ── Plate detector ───────────────────────────────────────────────────
+    # This must be a YOLO model FINE-TUNED on license plates — the COCO
+    # weights used by traffic_object_detection have no "plate" class.
+    # Point this at your trained .pt/.engine weights.
+    plate_model: "license_plate_yolov8n.pt"
+    confidence: 0.50
+
+    # ── OCR (EasyOCR) ────────────────────────────────────────────────────
+    ocr_languages: ["en"]
+    ocr_min_confidence: 0.50
+    min_plate_chars: 4
+
+    # ── Throttling ───────────────────────────────────────────────────────
+    # Detect+OCR is the heaviest pipeline in this workspace — throttle it
+    # independently of camera fps.
+    plate_check_rate_hz: 5.0
+    debug_fps: 5.0
+
+    # ── Output for decision_making/school_traffic_control ─────────────────
+    plate_allowed_topic: "/perception/plate_allowed"

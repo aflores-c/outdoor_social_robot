@@ -1,0 +1,10 @@
+# The school's plate allow-list. Kept separate from plate_detection.yaml
+# so operations can update it without touching detector tuning params.
+# Matching is case-insensitive and ignores spaces/dashes/dots — write
+# plates however is convenient here.
+
+plate_detector_node:
+  ros__parameters:
+    registered_plates:
+      - "ABC-123"
+      - "XYZ 789"
