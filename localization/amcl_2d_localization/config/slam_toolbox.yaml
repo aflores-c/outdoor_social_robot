@@ -21,6 +21,10 @@ slam_toolbox:
     mode: mapping
 
     resolution: 0.05
+    # Must match (or be below) velodyne_vlp32c_bringup's scan_range_clamp_node
+    # max_range (60.0 by default) -- slam_toolbox warns and the mapper crashes
+    # ("unable to get pointer in probability search") if this exceeds what the
+    # scan itself reports as its range capability.
     max_laser_range: 60.0          # increased for Velodyne VLP-32C outdoor range
     minimum_time_interval: 0.3
 

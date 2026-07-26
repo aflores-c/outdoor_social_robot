@@ -31,7 +31,7 @@ class ScanRangeClampNode(Node):
 
         self.declare_parameter('input_topic', 'scan_outdoor_raw')
         self.declare_parameter('output_topic', '/scan_outdoor')
-        self.declare_parameter('max_range', 25.0)
+        self.declare_parameter('max_range', 60.0)
 
         input_topic = self.get_parameter('input_topic').value
         output_topic = self.get_parameter('output_topic').value

@@ -33,11 +33,13 @@ def generate_launch_description():
 
     max_range_arg = DeclareLaunchArgument(
         'max_range',
-        default_value='25.0',
+        default_value='60.0',
         description='Clamp applied to the published scan_topic range_max. velodyne_laserscan_node '
                      'hardcodes range_max to the VLP-32C spec (200 m), which overflows '
                      "slam_toolbox/Karto's correlation grid at sensor registration and crashes it "
-                     '("Mapper FATAL ERROR - unable to get pointer in probability search").'
+                     '("Mapper FATAL ERROR - unable to get pointer in probability search"). '
+                     '60.0 matches amcl_2d_localization/config/slam_toolbox.yaml max_laser_range '
+                     '-- keep the two in sync.'
     )
 
     device_ip = LaunchConfiguration('device_ip')
