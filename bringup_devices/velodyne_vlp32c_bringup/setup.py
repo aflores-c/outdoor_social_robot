@@ -22,6 +22,8 @@ setup(
     description='Custom bringup package for Velodyne VLP32C',
     license='Apache License 2.0',
     entry_points={
-        'console_scripts': [],
+        'console_scripts': [
+            'scan_range_clamp_node = velodyne_vlp32c_bringup.scan_range_clamp_node:main',
+        ],
     },
 )

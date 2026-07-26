@@ -28,12 +28,22 @@ def generate_launch_description():
     scan_topic_arg = DeclareLaunchArgument(
         'scan_topic',
         default_value='/scan_outdoor',
-        description='Output LaserScan topic name'
+        description='Output LaserScan topic name (range_max-clamped, see scan_range_clamp_node)'
+    )
+
+    max_range_arg = DeclareLaunchArgument(
+        'max_range',
+        default_value='25.0',
+        description='Clamp applied to the published scan_topic range_max. velodyne_laserscan_node '
+                     'hardcodes range_max to the VLP-32C spec (200 m), which overflows '
+                     "slam_toolbox/Karto's correlation grid at sensor registration and crashes it "
+                     '("Mapper FATAL ERROR - unable to get pointer in probability search").'
     )
 
     device_ip = LaunchConfiguration('device_ip')
     frame_id = LaunchConfiguration('frame_id')
     scan_topic = LaunchConfiguration('scan_topic')
+    max_range = LaunchConfiguration('max_range')
 
     # -------------------------
     # Velodyne Driver
@@ -112,8 +122,23 @@ def generate_launch_description():
         output='screen',
         parameters=[laserscan_params],
         remappings=[
-            ('scan', scan_topic)   # <-- THIS IS THE IMPORTANT PART
+            ('scan', 'scan_outdoor_raw')   # unclamped range_max — see scan_range_clamp_node below
         ]
+    )
+
+    # -------------------------
+    # Range clamp (velodyne_laserscan_node hardcodes range_max to 200 m,
+    # which crashes slam_toolbox/Karto — see max_range_arg above)
+    # -------------------------
+    scan_range_clamp_node = Node(
+        package='velodyne_vlp32c_bringup',
+        executable='scan_range_clamp_node',
+        output='screen',
+        parameters=[{
+            'input_topic': 'scan_outdoor_raw',
+            'output_topic': scan_topic,
+            'max_range': max_range,
+        }]
     )
 
     # -------------------------
@@ -141,9 +166,11 @@ def generate_launch_description():
         device_ip_arg,
         frame_id_arg,
         scan_topic_arg,
+        max_range_arg,
         velodyne_driver_node,
         velodyne_transform_node,
         velodyne_laserscan_node,
+        scan_range_clamp_node,
         static_transform_node,
         RegisterEventHandler(
             OnProcessExit(

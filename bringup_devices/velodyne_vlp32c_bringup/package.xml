@@ -10,6 +10,7 @@
   <depend>rclpy</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
+  <depend>sensor_msgs</depend>
   <depend>velodyne_driver</depend>
   <depend>velodyne_pointcloud</depend>
   <depend>velodyne_laserscan</depend>
