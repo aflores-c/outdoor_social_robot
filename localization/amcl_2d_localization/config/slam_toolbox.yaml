@@ -21,14 +21,13 @@ slam_toolbox:
     mode: mapping
 
     resolution: 0.05
-    # Must match velodyne_vlp32c_bringup's scan_range_clamp_node max_range.
-    # 60.0 (matched on both sides) still crashed Karto ("unable to get
-    # pointer in probability search") when tested indoors -- at 0.05
-    # resolution that's a (2*60/0.05)^2 ~= 5.7M cell correlation grid,
-    # which is apparently too fragile to rely on regardless of environment.
-    # 25.0 is still far more than this robot needs for a school-crossing
-    # scale map (built up incrementally as the robot moves, not from a
-    # single 60m-radius scan) and keeps the grid ~16x smaller.
+    # Should match velodyne_vlp32c_bringup's scan_range_clamp_node max_range.
+    # NOTE: this value turned out NOT to be the cause of the
+    # "unable to get pointer in probability search" crash (tried both 60.0
+    # and 25.0, both crashed identically) -- see correlation_search_space_*
+    # below for the actual fix. 25.0 is kept here simply because it's more
+    # than enough for a school-crossing scale map, built up incrementally as
+    # the robot moves rather than from a single wide-radius scan.
     max_laser_range: 25.0
     minimum_time_interval: 0.3
 
@@ -48,9 +47,17 @@ slam_toolbox:
     loop_search_maximum_distance: 15.0
 
     # Correlation search
+    # This is the actual root cause of the "unable to get pointer in
+    # probability search" crash: Karto's m_pSearchSpaceProbs grid is sized
+    # purely from correlation_search_space_dimension/resolution (NOT
+    # max_laser_range, which we mistakenly chased first -- it has zero
+    # effect on this specific grid). 0.02 (from both reference configs we
+    # tried) hits a floating-point boundary/rounding edge case in Karto's
+    # grid indexing. 0.01 is slam_toolbox's own shipped, most widely tested
+    # default (config/mapper_params_online_async.yaml upstream) and avoids it.
     correlation_search_space_dimension: 0.5
-    correlation_search_space_resolution: 0.02
-    correlation_search_space_smear_deviation: 0.05
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
 
     # Loop closure
     do_loop_closing: true
