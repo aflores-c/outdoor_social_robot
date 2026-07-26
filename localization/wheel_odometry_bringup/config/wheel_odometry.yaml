@@ -1,0 +1,18 @@
+wheel_odom_tf_node:
+  ros__parameters:
+    # Topic published by the robot's mobile base controller (ros2_control
+    # diff_drive_controller). Adjust if your base uses a different name --
+    # check with: ros2 topic list | grep -i odom
+    odom_topic: "/mobile_base_controller/odom"
+
+    odom_frame: "odom"
+    base_frame: "base_footprint"
+
+    # Off by default. Many ros2_control diff_drive_controllers already
+    # broadcast odom -> base_footprint themselves (enable_odom_tf param on
+    # the controller side). Check with:
+    #   ros2 topic echo /tf --once
+    # BEFORE flipping this to true, and make sure scan_matcher_bringup's
+    # publish_tf is false if you enable this one -- never run two
+    # publish_tf:=true odometry sources at once.
+    publish_tf: false
