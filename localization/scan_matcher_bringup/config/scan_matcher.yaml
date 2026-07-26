@@ -1,0 +1,35 @@
+laser_scan_matcher:
+  ros__parameters:
+
+    # ── Frames ────────────────────────────────────────────────────────────
+    # Matches this workspace's convention (amcl_2d_localization/config/slam_toolbox.yaml,
+    # ndt_localization/config/ndt_localizer.yaml).
+    base_frame: "base_footprint"
+    odom_frame: "odom"
+    map_frame:  "map"
+    # frame_id of /scan_outdoor, set by vlp32c_outdoor.launch.py's frame_id arg
+    laser_frame: "velodyne"
+
+    # ── Output ───────────────────────────────────────────────────────────
+    # Publish TF odom -> base_footprint (required by mapping.launch.py /
+    # amcl_localization.launch.py).
+    publish_tf: true
+    # nav_msgs/Odometry is not required by AMCL/slam_toolbox — leave empty
+    # (disabled) unless you want it for debugging. Override via the
+    # publish_odom launch argument.
+    publish_odom: ""
+
+    # ── Keyframing ───────────────────────────────────────────────────────
+    # Generate a new reference scan once the robot has moved this far.
+    kf_dist_linear: 0.10
+    kf_dist_angular: 0.1745329252   # 10 deg
+
+    # ── CSM / ICP tuning ─────────────────────────────────────────────────
+    # Defaults below are the upstream ros2_laser_scan_matcher defaults
+    # (fine for typical indoor 2D lidar). Loosen max_linear_correction /
+    # max_angular_correction_deg if the robot moves fast relative to the
+    # scan rate outdoors and scan matching starts losing lock.
+    max_angular_correction_deg: 45.0
+    max_linear_correction: 0.5
+    max_iterations: 10
+    max_correspondence_dist: 0.3

@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>scan_matcher_bringup</name>
+  <version>0.0.0</version>
+  <description>
+    Bringup for ros2_laser_scan_matcher (vendored, built on the vendored csm
+    library) against the VLP-32C-derived /scan_outdoor topic. Publishes
+    odom -> base_footprint, the TF amcl_2d_localization's mapping and
+    localization launch files require.
+  </description>
+  <maintainer email="andy.flores@pucp.edu.pe">Andy Flores</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>ros2_laser_scan_matcher</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
