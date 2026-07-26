@@ -125,11 +125,11 @@ def generate_launch_description():
         arguments=[
             '--x', '-0.28',
             '--y', '0.0',
-            '--z', '1.66',
+            '--z', '0.60',
             '--roll', '0.0',
             '--pitch', '0.0',
-            '--yaw', '3.14159265358979',
-            '--frame-id', 'base_link',
+            '--yaw', '0.0',
+            '--frame-id', 'torso_lift_link',
             '--child-frame-id', frame_id
         ]
     )
