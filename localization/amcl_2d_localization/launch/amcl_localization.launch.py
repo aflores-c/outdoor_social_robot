@@ -30,51 +30,23 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
 
 
-def generate_launch_description():
+def launch_setup(context, *args, **kwargs):
 
     pkg_share = get_package_share_directory('amcl_2d_localization')
     amcl_config = os.path.join(pkg_share, 'config', 'amcl.yaml')
 
-    # ── Launch arguments ──────────────────────────────────────────────────
-
-    map_name_arg = DeclareLaunchArgument(
-        'map_name',
-        default_value='map',
-        description='Name of the map file (without .yaml) inside the package map/ folder. '
-                    'Example: map_name:=outdoor_lab  loads  map/outdoor_lab.yaml'
-    )
-
-    use_sim_time_arg = DeclareLaunchArgument(
-        'use_sim_time',
-        default_value='false',
-        description='Use simulation clock'
-    )
-
-    initial_x_arg = DeclareLaunchArgument(
-        'initial_x',   default_value='0.0',
-        description='Initial pose X (metres, map frame)')
-
-    initial_y_arg = DeclareLaunchArgument(
-        'initial_y',   default_value='0.0',
-        description='Initial pose Y (metres, map frame)')
-
-    initial_yaw_arg = DeclareLaunchArgument(
-        'initial_yaw', default_value='0.0',
-        description='Initial pose yaw (radians, map frame)')
-
     # ── Map file path: <pkg>/map/<map_name>.yaml ──────────────────────────
+    # Resolved here (instead of via substitution concatenation) so the
+    # filename join is plain Python string handling, not a launch
+    # Substitution composition that can break across launch versions.
 
-    map_file = PathJoinSubstitution([
-        FindPackageShare('amcl_2d_localization'),
-        'map',
-        [LaunchConfiguration('map_name'), '.yaml']
-    ])
+    map_name = LaunchConfiguration('map_name').perform(context)
+    map_file = os.path.join(pkg_share, 'map', f'{map_name}.yaml')
 
     # ── Nodes ─────────────────────────────────────────────────────────────
 
@@ -118,13 +90,43 @@ def generate_launch_description():
         }]
     )
 
+    return [map_server_node, amcl_node, lifecycle_manager_node]
+
+
+def generate_launch_description():
+
+    # ── Launch arguments ──────────────────────────────────────────────────
+
+    map_name_arg = DeclareLaunchArgument(
+        'map_name',
+        default_value='map',
+        description='Name of the map file (without .yaml) inside the package map/ folder. '
+                    'Example: map_name:=outdoor_lab  loads  map/outdoor_lab.yaml'
+    )
+
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='Use simulation clock'
+    )
+
+    initial_x_arg = DeclareLaunchArgument(
+        'initial_x',   default_value='0.0',
+        description='Initial pose X (metres, map frame)')
+
+    initial_y_arg = DeclareLaunchArgument(
+        'initial_y',   default_value='0.0',
+        description='Initial pose Y (metres, map frame)')
+
+    initial_yaw_arg = DeclareLaunchArgument(
+        'initial_yaw', default_value='0.0',
+        description='Initial pose yaw (radians, map frame)')
+
     return LaunchDescription([
         map_name_arg,
         use_sim_time_arg,
         initial_x_arg,
         initial_y_arg,
         initial_yaw_arg,
-        map_server_node,
-        amcl_node,
-        lifecycle_manager_node,
+        OpaqueFunction(function=launch_setup),
     ])
