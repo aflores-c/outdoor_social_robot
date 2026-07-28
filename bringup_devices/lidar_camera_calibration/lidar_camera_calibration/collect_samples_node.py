@@ -29,6 +29,7 @@ import rclpy
 from cv_bridge import CvBridge
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from std_srvs.srv import Trigger
 
@@ -100,8 +101,8 @@ class CollectSamplesNode(Node):
         lidar_topic = self.get_parameter('lidar_topic').value
         slop = self.get_parameter('sync_slop_s').value
 
-        self._sub_image = Subscriber(self, Image, image_topic)
-        self._sub_info = Subscriber(self, CameraInfo, info_topic)
+        self._sub_image = Subscriber(self, Image, image_topic, qos_profile=qos_profile_sensor_data)
+        self._sub_info = Subscriber(self, CameraInfo, info_topic, qos_profile=qos_profile_sensor_data)
         self._sub_lidar = Subscriber(self, PointCloud2, lidar_topic)
         self._sync = ApproximateTimeSynchronizer(
             [self._sub_image, self._sub_info, self._sub_lidar],
