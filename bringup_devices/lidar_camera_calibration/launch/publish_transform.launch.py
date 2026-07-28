@@ -30,7 +30,7 @@ from launch_ros.actions import Node
 
 def _load_and_publish(context, *args, **kwargs):
     result_file = LaunchConfiguration('result_file').perform(context)
-    result_path = Path(result_file)
+    result_path = Path(result_file).expanduser()
 
     if not result_path.exists():
         raise FileNotFoundError(
