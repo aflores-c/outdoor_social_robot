@@ -91,7 +91,7 @@ class CollectSamplesNode(Node):
         out = self.get_parameter('output_file').value
         if not out:
             out = str(Path.home() / '.ros' / 'lidar_camera_calibration' / 'samples.json')
-        self._output_file = out
+        self._output_file = str(Path(out).expanduser())
         Path(self._output_file).parent.mkdir(parents=True, exist_ok=True)
 
         # ── Subscribers + sync ─────────────────────────────────────────────────

@@ -47,7 +47,7 @@ class ValidateProjectionNode(Node):
             result_file = str(
                 Path.home() / '.ros' / 'lidar_camera_calibration' / 'lidar_to_camera.yaml'
             )
-        result_path = Path(result_file)
+        result_path = Path(result_file).expanduser()
         if not result_path.exists():
             self.get_logger().error(
                 f'Calibration result not found: {result_path}\n'

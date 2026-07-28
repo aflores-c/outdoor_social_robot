@@ -53,7 +53,7 @@ collect_samples_node:
     auto_capture_interval_s: 5.0
 
     # ── Output ────────────────────────────────────────────────────────────────
-    output_file: "/home/cas/.ros/lidar_camera_calibration/samples_head_front.json"
+    output_file: "~/.ros/lidar_camera_calibration/samples_head_front.json"
 
 
 validate_projection_node:
@@ -65,7 +65,7 @@ validate_projection_node:
     lidar_topic:       "/velodyne_points"
 
     # ── Calibration result ────────────────────────────────────────────────────
-    result_file: "/home/cas/.ros/lidar_camera_calibration/lidar_to_head_front_camera.yaml"
+    result_file: "~/.ros/lidar_camera_calibration/lidar_to_head_front_camera.yaml"
 
     sync_slop_s:   0.10
     max_range_m:   20.0
