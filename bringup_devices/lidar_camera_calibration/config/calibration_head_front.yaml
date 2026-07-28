@@ -1,0 +1,72 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Lidar-Camera Extrinsic Calibration — head_front_camera variant
+#
+# Same package as calibration.yaml (D455 chest camera), but targeting the
+# head-mounted RealSense (topics under /head_front_camera/...).
+#
+# Geometry (measured via TF, torso_lift_link -> head_front_camera_link /
+# torso_lift_link -> velodyne, head at neutral pan/tilt):
+#   LiDAR is ~0.375 m BEHIND the camera (x), ~0.017 m side offset (negligible),
+#   ~0.286 m ABOVE the camera (z). Both point forward (+x).
+# ──────────────────────────────────────────────────────────────────────────────
+
+collect_samples_node:
+  ros__parameters:
+
+    # ── Sensor topics ────────────────────────────────────────────────────────
+    image_topic:       "/head_front_camera/color/image_raw"
+    camera_info_topic: "/head_front_camera/color/camera_info"
+    lidar_topic:       "/velodyne_points"
+
+    # ── ChArUco board dimensions  ─────────────────────────────────────────────
+    board:
+      squares_x:      5
+      squares_y:      7
+      square_size_m:  0.10
+      marker_size_m:  0.075
+      aruco_dict:     "DICT_4X4_50"
+
+    # ── LiDAR region-of-interest (velodyne frame, metres) ────────────────────
+    # Camera is 0.375m in front of the LiDAR, so hold the board 1.5-3.5m from
+    # the CAMERA => it lands ~1.9-3.9m from the LiDAR. Camera sits 0.286m
+    # below the LiDAR, so at camera height the board is at z ~= -0.286 in the
+    # LiDAR frame; z_min gives margin to tilt the board down.
+    lidar_roi:
+      x_min:  1.9
+      x_max:  4.0
+      y_min: -0.6
+      y_max:  0.6
+      z_min: -0.6
+      z_max:  0.3
+
+    # ── RANSAC plane fitting ─────────────────────────────────────────────────
+    ransac:
+      distance_threshold_m: 0.02
+      max_iterations:       1000
+      min_inliers:          80
+
+    # ── Synchronisation ───────────────────────────────────────────────────────
+    sync_slop_s: 0.05
+
+    # ── Collection ────────────────────────────────────────────────────────────
+    min_samples:              6
+    auto_capture_interval_s: 5.0
+
+    # ── Output ────────────────────────────────────────────────────────────────
+    output_file: "/home/cas/.ros/lidar_camera_calibration/samples_head_front.json"
+
+
+validate_projection_node:
+  ros__parameters:
+
+    # ── Sensor topics ────────────────────────────────────────────────────────
+    image_topic:       "/head_front_camera/color/image_raw"
+    camera_info_topic: "/head_front_camera/color/camera_info"
+    lidar_topic:       "/velodyne_points"
+
+    # ── Calibration result ────────────────────────────────────────────────────
+    result_file: "/home/cas/.ros/lidar_camera_calibration/lidar_to_head_front_camera.yaml"
+
+    sync_slop_s:   0.10
+    max_range_m:   20.0
+    point_radius:  2

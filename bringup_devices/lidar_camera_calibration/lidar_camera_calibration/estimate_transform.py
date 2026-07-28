@@ -98,7 +98,12 @@ def main():
         '--min-samples', type=int, default=6,
         help='Minimum number of samples required (default: 6)',
     )
+    parser.add_argument(
+        '--camera-frame', default='camera_color_optical_frame',
+        help='Frame name to publish as parent (default: camera_color_optical_frame)',
+    )
     args = parser.parse_args()
+    camera_frame = args.camera_frame
 
     samples_path = Path(args.samples)
     if not samples_path.exists():
@@ -154,7 +159,7 @@ def main():
     print(f'\n{"=" * W}')
     print(' LIDAR → CAMERA EXTRINSIC CALIBRATION RESULT')
     print(f'{"=" * W}')
-    print(f'\nTransform:  velodyne  →  camera_color_optical_frame')
+    print(f'\nTransform:  velodyne  →  {camera_frame}')
     print(f'\nRotation matrix R (R @ p_lidar = p_cam):')
     for row in R:
         print(f'  [{row[0]:+.6f}  {row[1]:+.6f}  {row[2]:+.6f}]')
@@ -185,7 +190,7 @@ def main():
         f'    --x {t[0]:.8f} --y {t[1]:.8f} --z {t[2]:.8f} \\\n'
         f'    --qx {quat[0]:.8f} --qy {quat[1]:.8f} '
         f'--qz {quat[2]:.8f} --qw {quat[3]:.8f} \\\n'
-        f'    --frame-id camera_color_optical_frame --child-frame-id velodyne'
+        f'    --frame-id {camera_frame} --child-frame-id velodyne'
     )
     print(f'\nOr via launch file:\n'
           f'  ros2 launch lidar_camera_calibration publish_transform.launch.py\n'
@@ -195,7 +200,7 @@ def main():
     # ── Save YAML ─────────────────────────────────────────────────────────────────
     result = {
         'lidar_to_camera': {
-            'parent_frame': 'camera_color_optical_frame',
+            'parent_frame': camera_frame,
             'child_frame': 'velodyne',
             'translation': {
                 'x': float(t[0]),
