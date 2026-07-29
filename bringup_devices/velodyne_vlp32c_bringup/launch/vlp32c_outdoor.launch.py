@@ -146,20 +146,29 @@ def generate_launch_description():
     # -------------------------
     # Static Transform Publisher
     # -------------------------
-    static_transform_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        arguments=[
-            '--x', '-0.28',
-            '--y', '0.0',
-            '--z', '0.60',
-            '--roll', '0.0',
-            '--pitch', '0.0',
-            '--yaw', '0.0',
-            '--frame-id', 'torso_lift_link',
-            '--child-frame-id', frame_id
-        ]
-    )
+    # DISABLED 2026-07-29: rough hand-measured guess (-0.28, 0, 0.60, no rotation).
+    # Superseded during testing of a data-driven replacement derived from the
+    # head_front_camera<->velodyne calibration (see lidar_camera_calibration pkg,
+    # HEAD_FRONT_CAMERA_CALIBRATION.md). Run the candidate transform manually:
+    #   ros2 run tf2_ros static_transform_publisher \
+    #       --x -0.654889 --y -0.271709 --z 0.467110 \
+    #       --qx 0.003448 --qy 0.034934 --qz -0.016860 --qw 0.999241 \
+    #       --frame-id torso_lift_link --child-frame-id velodyne
+    # Re-enable this node (and remove the manual override above) once validated.
+    # static_transform_node = Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     arguments=[
+    #         '--x', '-0.28',
+    #         '--y', '0.0',
+    #         '--z', '0.60',
+    #         '--roll', '0.0',
+    #         '--pitch', '0.0',
+    #         '--yaw', '0.0',
+    #         '--frame-id', 'torso_lift_link',
+    #         '--child-frame-id', frame_id
+    #     ]
+    # )
 
     # -------------------------
     # Launch Description
@@ -173,7 +182,6 @@ def generate_launch_description():
         velodyne_transform_node,
         velodyne_laserscan_node,
         scan_range_clamp_node,
-        static_transform_node,
         RegisterEventHandler(
             OnProcessExit(
                 target_action=velodyne_driver_node,
