@@ -128,7 +128,46 @@ recollect with more roll variation).
 
 ---
 
-## Outstanding work: dynamic transform for the movable head
+## Update 2026-07-30: manual calibration superseded the ChArUco/SVD result
+
+The ChArUco/SVD method above got a *usable* result (1.4° mean angular error) but fought
+us the whole way — wall contamination, roll ambiguity, translation magnitude drifting
+across independently-collected batches even after outlier filtering. A manual
+depth-comparison calibration, done directly against `torso_lift_link → velodyne`,
+gave a **much better and more direct** result. Why it worked better here: the LiDAR and
+head_front_camera share the same yaw axis and are both mounted parallel to the ground,
+so rotation is nearly fully constrained by the mechanical mount — manual tuning only
+really has translation to get right, unlike the ChArUco method which was solving for
+all 6 DOF blind from noisy plane correspondences.
+
+**This manual value is now the deployed one**, in
+`velodyne_vlp32c_bringup/launch/vlp32c_outdoor.launch.py`:
+```
+torso_lift_link -> velodyne:  x=-0.324889  y=-0.000000  z=0.700000
+                               qx=0.003448  qy=0.034934  qz=-0.016860  qw=0.999241
+```
+
+**The dynamic-transform problem below is now solved**, not by correcting the URDF, but
+by anchoring the calibration at `torso_lift_link` (body-fixed, doesn't move with the
+head) instead of directly at the camera frame. `head_front_camera_color_optical_frame`
+connects to `torso_lift_link` through the head's own live pan/tilt joint chain (already
+correctly published by `robot_state_publisher` from `/joint_states`), so the full
+`camera → velodyne` transform now stays correct automatically as the head moves — no
+extra node, no URDF edit needed. `traffic_object_detection`'s
+`traffic_object_detector_node.py` was updated to read this transform live from TF every
+frame (via a `camera_frame` param) instead of loading a fixed matrix from a calibration
+YAML once at startup — see its `config/detection_head_front.yaml`.
+
+One gotcha hit while composing/decomposing transforms for this: the camera's optical
+frame only shows up in the live TF tree at all if the camera node is configured
+correctly — a real internal robot config error had it publishing frames under
+`rgbd_camera_*` (matching what `camera_info.frame_id` reports) on a **disconnected
+branch** (`rgbd_camera_link` had no parent) instead of the connected
+`head_front_camera_color_optical_frame` chain. If `ros2 run tf2_ros static_transform_publisher`-style
+TF lookups fail or a frame is missing from `buf.all_frames_as_string()`, check for this
+before assuming the calibration itself is wrong.
+
+## Outstanding work: dynamic transform for the movable head (superseded, see above)
 
 Not solved this session — punted with a static YAML for now, valid only at the head pose
 used during this calibration.

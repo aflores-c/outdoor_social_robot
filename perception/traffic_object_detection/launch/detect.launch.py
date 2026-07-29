@@ -4,8 +4,17 @@ Launch combined pedestrian + vehicle detection.
 Starts:
   - Velodyne VLP-32C driver       (unless launch_lidar:=false)
   - Intel RealSense D455 camera   (unless launch_camera:=false)
-  - lidar_camera static TF        (from calibration result)
+  - lidar_camera static TF        (from calibration result; unless publish_calibrated_tf:=false)
   - traffic_object_detector_node
+
+The detector reads the camera<->LiDAR transform live from TF every frame (see
+camera_frame param in detection.yaml), not from a calibration file. The chest
+D455 isn't otherwise connected to the robot body in the URDF, so
+publish_calibrated_tf:=true (default) publishes it as a static TF here. For
+head_front_camera, that connection already exists via the robot's own URDF +
+velodyne_vlp32c_bringup's torso_lift_link->velodyne static TF — use
+publish_calibrated_tf:=false there to avoid a conflicting second parent for
+the velodyne frame.
 
 Published topics:
   /perception/pedestrians            traffic_perception_msgs/PedestrianDetectionArray
@@ -19,6 +28,11 @@ Usage:
     # Sensors already running
     ros2 launch traffic_object_detection detect.launch.py \\
         launch_lidar:=false launch_camera:=false
+
+    # head_front_camera (sensors + TF already provided by robot bringup)
+    ros2 launch traffic_object_detection detect.launch.py \\
+        launch_lidar:=false launch_camera:=false publish_calibrated_tf:=false \\
+        config_file:=<path-to>/detection_head_front.yaml
 """
 
 import os
@@ -60,7 +74,13 @@ def generate_launch_description():
     )
     cal_arg = DeclareLaunchArgument(
         'calibration_file', default_value=default_cal,
-        description='Path to lidar_to_camera.yaml',
+        description='Path to lidar_to_camera.yaml (only used if publish_calibrated_tf:=true)',
+    )
+    publish_tf_arg = DeclareLaunchArgument(
+        'publish_calibrated_tf', default_value='true',
+        description='Publish camera<->velodyne as a static TF from calibration_file. '
+                     'Set false if that connection already exists in the URDF/TF tree '
+                     '(e.g. head_front_camera).',
     )
     model_arg = DeclareLaunchArgument(
         'yolo_model', default_value='yolov8n.pt',
@@ -98,7 +118,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('launch_camera')),
     )
 
-    # ── Calibrated static TF ───────────────────────────────────────────────
+    # ── Calibrated static TF (chest D455 only — see module docstring) ──────
     publish_tf_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
@@ -109,6 +129,7 @@ def generate_launch_description():
         launch_arguments={
             'result_file': LaunchConfiguration('calibration_file'),
         }.items(),
+        condition=IfCondition(LaunchConfiguration('publish_calibrated_tf')),
     )
 
     # ── Traffic object detector ────────────────────────────────────────────
@@ -120,8 +141,7 @@ def generate_launch_description():
         emulate_tty=True,
         parameters=[
             LaunchConfiguration('config_file'),
-            {'calibration_file': LaunchConfiguration('calibration_file'),
-             'yolo_model':       LaunchConfiguration('yolo_model')},
+            {'yolo_model': LaunchConfiguration('yolo_model')},
         ],
     )
 
@@ -131,6 +151,7 @@ def generate_launch_description():
         device_ip_arg,
         config_arg,
         cal_arg,
+        publish_tf_arg,
         model_arg,
         vlp32c_launch,
         realsense_node,

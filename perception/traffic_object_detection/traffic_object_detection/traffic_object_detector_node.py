@@ -10,11 +10,16 @@ object type, halves the GPU inference cost on the Jetson Orin AGX.
 
 Pipeline per frame:
   1. YOLO detects persons + vehicles in the RGB image → 2D bounding boxes
-  2. LiDAR point cloud is projected into the image using the calibrated
-     velodyne → camera_color_optical_frame transform (R, t, K)
+  2. LiDAR point cloud is projected into the image using the live
+     velodyne → camera_frame transform (R, t looked up from TF each frame, + K)
   3. LiDAR points that fall inside each bounding box are extracted
   4. Median centroid of those points = object pose (x, y, z) in velodyne frame
   5. Detections are split by class into pedestrian / vehicle buckets
+
+The camera → LiDAR transform is read from the TF tree on every frame rather than
+loaded once from a calibration YAML, so this stays correct if the camera is on a
+moving joint (e.g. a pan/tilt head) — the transform updates automatically as the
+joint moves, as long as both frames are connected in the URDF/TF tree.
 
 Published topics:
   <pedestrians_topic>                    traffic_perception_msgs/PedestrianDetectionArray
@@ -29,18 +34,18 @@ Published topics:
 """
 
 import threading
-from pathlib import Path
 
 import cv2
 import numpy as np
 import rclpy
-import yaml
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Point, Pose, PoseArray
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from tf2_ros import Buffer, ConnectivityException, ExtrapolationException, LookupException, TransformListener
 from traffic_perception_msgs.msg import (
     PedestrianDetection, PedestrianDetectionArray,
     VehicleDetection, VehicleDetectionArray,
@@ -56,6 +61,14 @@ VEHICLE_CLASSES = [2, 3, 5, 7]   # car, motorcycle, bus, truck
 ALL_CLASSES = PEDESTRIAN_CLASSES + VEHICLE_CLASSES
 
 
+def _quat_to_matrix(x: float, y: float, z: float, w: float) -> np.ndarray:
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w)],
+        [2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y)],
+    ])
+
+
 class TrafficObjectDetectorNode(Node):
 
     def __init__(self):
@@ -65,7 +78,7 @@ class TrafficObjectDetectorNode(Node):
         self.declare_parameter('rgb_topic',         '/camera/realsense2_camera/color/image_raw')
         self.declare_parameter('camera_info_topic', '/camera/realsense2_camera/color/camera_info')
         self.declare_parameter('lidar_topic',       '/velodyne_points')
-        self.declare_parameter('calibration_file',  '')
+        self.declare_parameter('camera_frame',      'camera_color_optical_frame')
         self.declare_parameter('yolo_model',        'yolov8n.pt')
         self.declare_parameter('confidence',        0.40)
         self.declare_parameter('pedestrian_min_lidar_points', 5)
@@ -82,7 +95,7 @@ class TrafficObjectDetectorNode(Node):
         lidar_topic = self.get_parameter('lidar_topic').value
         pedestrians_topic = self.get_parameter('pedestrians_topic').value
         vehicles_topic    = self.get_parameter('vehicles_topic').value
-        cal_file    = self.get_parameter('calibration_file').value
+        self._camera_frame = self.get_parameter('camera_frame').value
         model_path  = self.get_parameter('yolo_model').value
         self._conf              = float(self.get_parameter('confidence').value)
         self._min_pts_ped       = int(self.get_parameter('pedestrian_min_lidar_points').value)
@@ -93,27 +106,13 @@ class TrafficObjectDetectorNode(Node):
         self._debug_period       = 1.0 / debug_fps if debug_fps > 0 else 0.0
         self._last_debug_t       = 0.0
 
-        # ── Calibration ───────────────────────────────────────────────────────
-        if not cal_file:
-            cal_file = str(
-                Path.home() / '.ros' / 'lidar_camera_calibration' / 'lidar_to_camera.yaml'
-            )
-        cal_path = Path(cal_file)
-        if not cal_path.exists():
-            self.get_logger().error(
-                f'Calibration file not found: {cal_path}\n'
-                'Run: ros2 launch lidar_camera_calibration collect.launch.py'
-            )
-            raise FileNotFoundError(str(cal_path))
-
-        with open(cal_path) as f:
-            cal = yaml.safe_load(f)['lidar_to_camera']
-        self._R = np.array(cal['rotation']['matrix'], dtype=np.float64)
-        tr = cal['translation']
-        self._t = np.array([tr['x'], tr['y'], tr['z']], dtype=np.float64)
-        self.get_logger().info(
-            f'Calibration loaded: t=[{self._t[0]:.3f}, {self._t[1]:.3f}, {self._t[2]:.3f}] m'
-        )
+        # ── Camera <-> LiDAR transform (read live from TF every frame) ──────────
+        # Not loaded once from a calibration YAML: if camera_frame is on a moving
+        # joint (e.g. a pan/tilt head), a fixed transform goes stale the moment it
+        # moves. TF already tracks that live via /joint_states, as long as
+        # camera_frame and lidar_frame are connected in the URDF.
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
 
         # ── YOLO ──────────────────────────────────────────────────────────────
         assert torch.cuda.is_available(), 'CUDA not available — check drivers'
@@ -153,7 +152,7 @@ class TrafficObjectDetectorNode(Node):
             f'  LiDAR: {lidar_topic}\n'
             f'  Model: {model_path}  |  conf={self._conf}  |  classes={ALL_CLASSES}\n'
             f'  GPU:   {torch.cuda.get_device_name(0)}\n'
-            f'  Frame: {self._lidar_frame}\n'
+            f'  TF:    {self._camera_frame} -> {self._lidar_frame} (looked up live)\n'
             f'{"=" * 58}'
         )
 
@@ -172,6 +171,18 @@ class TrafficObjectDetectorNode(Node):
 
         h, w = frame.shape[:2]
 
+        # ── Live camera <-> LiDAR transform ──────────────────────────────────
+        try:
+            tf = self._tf_buffer.lookup_transform(self._camera_frame, self._lidar_frame, Time())
+        except (LookupException, ConnectivityException, ExtrapolationException) as e:
+            self.get_logger().warn(f'TF lookup {self._camera_frame} <- {self._lidar_frame} failed: {e}',
+                                    throttle_duration_sec=5.0)
+            return
+        tr = tf.transform.translation
+        q  = tf.transform.rotation
+        R = _quat_to_matrix(q.x, q.y, q.z, q.w)
+        t = np.array([tr.x, tr.y, tr.z], dtype=np.float64)
+
         # ── LiDAR → camera projection ──────────────────────────────────────
         pts_lidar = self._pc2_to_xyz(pc_msg)
 
@@ -180,7 +191,7 @@ class TrafficObjectDetectorNode(Node):
         pts_lidar = pts_lidar[ranges < self._max_range]
 
         # Transform to camera optical frame
-        pts_cam = (self._R @ pts_lidar.T).T + self._t
+        pts_cam = (R @ pts_lidar.T).T + t
 
         # Keep only points in front of camera
         front = pts_cam[:, 2] > 0.1
@@ -274,7 +285,7 @@ class TrafficObjectDetectorNode(Node):
                     cv2.circle(debug_img, (px_in[i], py_in[i]), 2, (b, 0, rv), -1)
 
                 # Centroid pixel (project back)
-                cp_cam = self._R @ np.array([cx3d, cy3d, cz3d]) + self._t
+                cp_cam = R @ np.array([cx3d, cy3d, cz3d]) + t
                 if cp_cam[2] > 0:
                     u = int(K[0, 0] * cp_cam[0] / cp_cam[2] + K[0, 2])
                     v = int(K[1, 1] * cp_cam[1] / cp_cam[2] + K[1, 2])

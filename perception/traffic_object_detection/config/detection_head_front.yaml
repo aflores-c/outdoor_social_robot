@@ -2,16 +2,17 @@ traffic_object_detector_node:
   ros__parameters:
 
     # ── Sensor topics ─────────────────────────────────────────────────────
-    rgb_topic:         "/camera/realsense2_camera/color/image_raw"
-    camera_info_topic: "/camera/realsense2_camera/color/camera_info"
+    rgb_topic:         "/head_front_camera/color/image_raw"
+    camera_info_topic: "/head_front_camera/color/camera_info"
     lidar_topic:       "/velodyne_points"
 
     # ── Camera <-> LiDAR transform ──────────────────────────────────────────
     # Read live from TF every frame (camera_frame -> lidar_frame), not from a
-    # calibration YAML — stays correct even if camera_frame is on a moving
-    # joint. Must match the optical frame_id actually used by rgb_topic/
-    # camera_info_topic above, and must be connected to lidar_frame in TF.
-    camera_frame: "camera_color_optical_frame"
+    # calibration YAML — stays correct as the head pans/tilts, as long as
+    # camera_frame and lidar_frame stay connected in TF (torso_lift_link ->
+    # velodyne static publish in velodyne_vlp32c_bringup + the head's own
+    # URDF chain up to head_front_camera_color_optical_frame).
+    camera_frame: "head_front_camera_color_optical_frame"
 
     # ── YOLO ─────────────────────────────────────────────────────────────
     # Single pass, classes=[0,2,3,5,7] (person, car, motorcycle, bus, truck)
