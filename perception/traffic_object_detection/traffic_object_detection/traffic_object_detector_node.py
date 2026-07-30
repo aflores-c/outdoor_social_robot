@@ -44,7 +44,7 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from tf2_ros import Buffer, ConnectivityException, ExtrapolationException, LookupException, TransformListener
 from traffic_perception_msgs.msg import (
     PedestrianDetection, PedestrianDetectionArray,
@@ -125,8 +125,13 @@ class TrafficObjectDetectorNode(Node):
         self._lock   = threading.Lock()
 
         # ── Subscribers (synchronized) ─────────────────────────────────────
+        # Compressed transport for RGB: on this deployment the camera stream
+        # crosses wifi from the robot's onboard PC to the jetson, so subscribing
+        # to <rgb_topic>/compressed (sensor_msgs/CompressedImage) instead of the
+        # raw topic cuts that leg's bandwidth. Decoded via cv_bridge below.
+        rgb_compressed_topic = rgb_topic + '/compressed'
         slop = float(self.get_parameter('sync_slop_s').value)
-        self._sub_img  = Subscriber(self, Image,       rgb_topic,   qos_profile=qos_profile_sensor_data)
+        self._sub_img  = Subscriber(self, CompressedImage, rgb_compressed_topic, qos_profile=qos_profile_sensor_data)
         self._sub_info = Subscriber(self, CameraInfo,  info_topic,  qos_profile=qos_profile_sensor_data)
         self._sub_pc   = Subscriber(self, PointCloud2, lidar_topic, qos_profile=qos_profile_sensor_data)
         self._sync = ApproximateTimeSynchronizer(
@@ -139,7 +144,7 @@ class TrafficObjectDetectorNode(Node):
         # synchronizer, to tell apart "topic not reaching this node" from
         # "reaching it but never matched into a triple". Remove once resolved.
         self._dbg_counts = {'img': 0, 'info': 0, 'pc': 0, 'cb': 0}
-        self.create_subscription(Image, rgb_topic, lambda m: self._dbg_bump('img'), qos_profile_sensor_data)
+        self.create_subscription(CompressedImage, rgb_compressed_topic, self._dbg_image_only, qos_profile_sensor_data)
         self.create_subscription(CameraInfo, info_topic, lambda m: self._dbg_bump('info'), qos_profile_sensor_data)
         self.create_subscription(PointCloud2, lidar_topic, lambda m: self._dbg_bump('pc'), qos_profile_sensor_data)
         self.create_timer(2.0, self._dbg_report)
@@ -157,7 +162,7 @@ class TrafficObjectDetectorNode(Node):
         self.get_logger().info(
             f'\n{"=" * 58}\n'
             f'  Traffic Object Detector (pedestrians + vehicles)\n'
-            f'  RGB:   {rgb_topic}\n'
+            f'  RGB:   {rgb_compressed_topic}\n'
             f'  LiDAR: {lidar_topic}\n'
             f'  Model: {model_path}  |  conf={self._conf}  |  classes={ALL_CLASSES}\n'
             f'  GPU:   {torch.cuda.get_device_name(0)}\n'
@@ -169,6 +174,19 @@ class TrafficObjectDetectorNode(Node):
     def _dbg_bump(self, key):
         self._dbg_counts[key] += 1
 
+    def _dbg_image_only(self, img_msg: CompressedImage):
+        """YOLO on every image frame, no LiDAR/sync/TF involved — isolates
+        whether GPU inference itself keeps up and finds anything at all."""
+        self._dbg_bump('img')
+        try:
+            frame = self._bridge.compressed_imgmsg_to_cv2(img_msg, 'bgr8')
+        except Exception as e:
+            self.get_logger().warn(f'[DEBUG image-only] conversion failed: {e}', throttle_duration_sec=5.0)
+            return
+        results = self._model(frame, conf=self._conf, classes=ALL_CLASSES, device=self._device, verbose=False)
+        n = sum(len(r.boxes) if r.boxes is not None else 0 for r in results)
+        self.get_logger().info(f'[DEBUG image-only] yolo_boxes={n}', throttle_duration_sec=1.0)
+
     def _dbg_report(self):
         c = self._dbg_counts
         self.get_logger().info(
@@ -179,14 +197,14 @@ class TrafficObjectDetectorNode(Node):
 
     # ── Main callback ──────────────────────────────────────────────────────
 
-    def _cb(self, img_msg: Image, info_msg: CameraInfo, pc_msg: PointCloud2):
+    def _cb(self, img_msg: CompressedImage, info_msg: CameraInfo, pc_msg: PointCloud2):
         self._dbg_counts['cb'] += 1
         # Camera intrinsics
         K = np.array(info_msg.k, dtype=np.float64).reshape(3, 3)
         D = np.array(info_msg.d, dtype=np.float64)
 
         try:
-            frame = self._bridge.imgmsg_to_cv2(img_msg, 'bgr8')
+            frame = self._bridge.compressed_imgmsg_to_cv2(img_msg, 'bgr8')
         except Exception as e:
             self.get_logger().warn(f'Image conversion: {e}', throttle_duration_sec=5.0)
             return
