@@ -89,6 +89,11 @@ class TrafficObjectDetectorNode(Node):
         self.declare_parameter('debug_fps',         5.0)
         self.declare_parameter('pedestrians_topic', '/perception/pedestrians')
         self.declare_parameter('vehicles_topic',    '/perception/vehicles')
+        # velodyne mounted ~1.74m above ground (frame is Z-up); points within
+        # ground_margin_m of that plane are treated as ground clutter, not object.
+        self.declare_parameter('ground_height_m',   1.74)
+        self.declare_parameter('ground_margin_m',   0.15)
+        self.declare_parameter('outlier_mad_k',     3.0)
 
         rgb_topic   = self.get_parameter('rgb_topic').value
         info_topic  = self.get_parameter('camera_info_topic').value
@@ -102,6 +107,9 @@ class TrafficObjectDetectorNode(Node):
         self._min_pts_veh       = int(self.get_parameter('vehicle_min_lidar_points').value)
         self._lidar_frame       = self.get_parameter('lidar_frame').value
         self._max_range         = float(self.get_parameter('max_range_m').value)
+        self._ground_z          = -(float(self.get_parameter('ground_height_m').value)
+                                     - float(self.get_parameter('ground_margin_m').value))
+        self._outlier_mad_k     = float(self.get_parameter('outlier_mad_k').value)
         debug_fps                = float(self.get_parameter('debug_fps').value)
         self._debug_period       = 1.0 / debug_fps if debug_fps > 0 else 0.0
         self._last_debug_t       = 0.0
@@ -301,11 +309,28 @@ class TrafficObjectDetectorNode(Node):
                 # LiDAR points inside this bounding box
                 inside = (px >= x1) & (px <= x2) & (py >= y1) & (py <= y2)
                 pts_in = pts_lidar[inside]
+                n_raw = len(pts_in)
+
+                # Ground removal: drop points at/near the flat ground plane
+                # (velodyne frame is Z-up) before they can pull the centroid down.
+                pts_in = pts_in[pts_in[:, 2] > self._ground_z]
+                n_after_ground = len(pts_in)
+
+                # Outlier rejection: reject points whose range is far from the
+                # box's robust median range (median absolute deviation, scaled to
+                # approximate std dev) — catches stray background/reflection
+                # points inside an otherwise loose bounding box.
+                if len(pts_in) > 0:
+                    ranges_in = np.linalg.norm(pts_in, axis=1)
+                    med_range = np.median(ranges_in)
+                    scaled_mad = max(np.median(np.abs(ranges_in - med_range)) * 1.4826, 0.05)
+                    pts_in = pts_in[np.abs(ranges_in - med_range) <= self._outlier_mad_k * scaled_mad]
 
                 if len(pts_in) < min_pts:
                     self.get_logger().info(
                         f'[DEBUG] {kind} box conf={conf:.2f} bbox=({x1},{y1},{x2},{y2}) '
-                        f'pts_in={len(pts_in)} < min_pts={min_pts} -> dropped',
+                        f'pts_in={n_raw} after_ground={n_after_ground} after_outliers={len(pts_in)} '
+                        f'< min_pts={min_pts} -> dropped',
                         throttle_duration_sec=2.0,
                     )
                     cv2.rectangle(debug_img, (x1, y1), (x2, y2), (100, 100, 100), 2)
@@ -313,7 +338,7 @@ class TrafficObjectDetectorNode(Node):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
                     continue
 
-                # Median centroid in velodyne frame (robust to outliers)
+                # Median centroid in velodyne frame (robust to remaining outliers)
                 cx3d, cy3d, cz3d = np.median(pts_in, axis=0)
                 dist = float(np.sqrt(cx3d**2 + cy3d**2))
                 (poses_veh if is_vehicle else poses_ped).append((cx3d, cy3d, cz3d, conf))
