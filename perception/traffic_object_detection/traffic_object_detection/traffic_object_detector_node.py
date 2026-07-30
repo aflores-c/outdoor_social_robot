@@ -135,6 +135,15 @@ class TrafficObjectDetectorNode(Node):
         )
         self._sync.registerCallback(self._cb)
 
+        # ── DEBUG: raw per-topic arrival counters, independent of the
+        # synchronizer, to tell apart "topic not reaching this node" from
+        # "reaching it but never matched into a triple". Remove once resolved.
+        self._dbg_counts = {'img': 0, 'info': 0, 'pc': 0, 'cb': 0}
+        self.create_subscription(Image, rgb_topic, lambda m: self._dbg_bump('img'), qos_profile_sensor_data)
+        self.create_subscription(CameraInfo, info_topic, lambda m: self._dbg_bump('info'), qos_profile_sensor_data)
+        self.create_subscription(PointCloud2, lidar_topic, lambda m: self._dbg_bump('pc'), qos_profile_sensor_data)
+        self.create_timer(2.0, self._dbg_report)
+
         # ── Publishers ─────────────────────────────────────────────────────
         self._pub_ped_poses   = self.create_publisher(PoseArray, '/traffic_object_detection/pedestrians/poses', 10)
         self._pub_ped_markers = self.create_publisher(MarkerArray, '/traffic_object_detection/pedestrians/markers', 10)
@@ -156,9 +165,22 @@ class TrafficObjectDetectorNode(Node):
             f'{"=" * 58}'
         )
 
+    # ── DEBUG helpers ────────────────────────────────────────────────────
+    def _dbg_bump(self, key):
+        self._dbg_counts[key] += 1
+
+    def _dbg_report(self):
+        c = self._dbg_counts
+        self.get_logger().info(
+            f'[DEBUG] last 2s — img:{c["img"]} info:{c["info"]} pc:{c["pc"]} synced_cb:{c["cb"]}'
+        )
+        for k in c:
+            c[k] = 0
+
     # ── Main callback ──────────────────────────────────────────────────────
 
     def _cb(self, img_msg: Image, info_msg: CameraInfo, pc_msg: PointCloud2):
+        self._dbg_counts['cb'] += 1
         # Camera intrinsics
         K = np.array(info_msg.k, dtype=np.float64).reshape(3, 3)
         D = np.array(info_msg.d, dtype=np.float64)
@@ -232,6 +254,12 @@ class TrafficObjectDetectorNode(Node):
             verbose=False,
         )
 
+        total_boxes = sum(len(r.boxes) if r.boxes is not None else 0 for r in results)
+        self.get_logger().info(
+            f'[DEBUG] cb fired: lidar_pts_in_img={len(pts_lidar)} yolo_boxes={total_boxes}',
+            throttle_duration_sec=2.0,
+        )
+
         # ── Per-detection pose extraction ──────────────────────────────────
         poses_ped = []   # (x, y, z, conf) in velodyne frame
         poses_veh = []
@@ -257,6 +285,11 @@ class TrafficObjectDetectorNode(Node):
                 pts_in = pts_lidar[inside]
 
                 if len(pts_in) < min_pts:
+                    self.get_logger().info(
+                        f'[DEBUG] {kind} box conf={conf:.2f} bbox=({x1},{y1},{x2},{y2}) '
+                        f'pts_in={len(pts_in)} < min_pts={min_pts} -> dropped',
+                        throttle_duration_sec=2.0,
+                    )
                     cv2.rectangle(debug_img, (x1, y1), (x2, y2), (100, 100, 100), 2)
                     cv2.putText(debug_img, 'no LiDAR', (x1, y1 - 6),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
