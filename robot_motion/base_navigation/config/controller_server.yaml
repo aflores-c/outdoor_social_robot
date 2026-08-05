@@ -121,7 +121,7 @@ local_costmap:
       height: 5
 
       plugins: ["obstacle_laser_layer", "inflation_layer"]
-      filters: ["keepout_filter", "inflation_layer"] # Using Inflation in Keepout for https://github.com/open-navigation/navigation2/issues/1263
+      filters: ["inflation_layer"] # Using Inflation in Keepout for https://github.com/open-navigation/navigation2/issues/1263
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -147,7 +147,10 @@ local_costmap:
           obstacle_max_range: 5.5
           obstacle_min_range: 0.0
 
-      keepout_filter:
-        plugin: "nav2_costmap_2d::KeepoutFilter"
-        enabled: True
-        filter_info_topic: "/keepout_map_mask/mask_info"
+      # keepout_filter disabled: no CostmapFilterInfoServer/MapServer publish the mask yet.
+      # Re-enable by adding "keepout_filter" back to `filters` above and restoring this block
+      # once a keepout mask + filter info server are set up.
+      # keepout_filter:
+      #   plugin: "nav2_costmap_2d::KeepoutFilter"
+      #   enabled: True
+      #   filter_info_topic: "/keepout_map_mask/mask_info"
