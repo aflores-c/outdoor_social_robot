@@ -137,6 +137,7 @@ class SchoolTrafficControlNode(Node):
         self._motion_init_stop = "norway_init_stop"
         self._motion_init_pass = "norway_init_pass"
         self._motion_pass_wave = "norway_pass_wave"
+        self._motion_pass_init = "norway_pass_init"
 
 
         self._range_near = float(self.get_parameter('range_near_m').value)
@@ -185,6 +186,10 @@ class SchoolTrafficControlNode(Node):
         # Used only while in RETURNING, to know when both actions finished.
         self._nav_done = True
         self._motion_done = True
+
+        # Used only while in VEHICLE_PASS, to sequence the stop-init motion
+        # before the pass gesture instead of sending both at once.
+        self._pass_gesture_sent = False
 
         # Pedestrian alert bookkeeping (independent of the state machine).
         self._say_in_flight = False
@@ -264,6 +269,13 @@ class SchoolTrafficControlNode(Node):
             if target_vehicle is None:
                 # Vehicle has passed through — head back immediately.
                 self._enter_returning()
+            elif not self._motion_done:
+                # Still finishing the stop-init motion — wait for it before
+                # sending the pass gesture.
+                pass
+            elif not self._pass_gesture_sent:
+                self._pass_gesture_sent = True
+                self._send_motion(self._motion_init_pass)
             else:
                 #wave with the arm to allow vehicle to pass
                 self._passing_vehicle()
@@ -292,10 +304,11 @@ class SchoolTrafficControlNode(Node):
 
     def _enter_vehicle_pass(self):
         self._state = State.VEHICLE_PASS
-        self.get_logger().info('Plate allowed — state=VEHICLE_PASS (move to pose B + pass gesture)')
+        self._motion_done = False
+        self._pass_gesture_sent = False
+        self.get_logger().info('Plate allowed — state=VEHICLE_PASS (stop-init motion, then pass gesture)')
         #self._send_nav_goal(self._pose_b)
         self._send_motion(self._motion_stop_init)
-        self._send_motion(self._motion_init_pass)
 
     def _enter_returning(self):
         self._state = State.RETURNING
@@ -326,13 +339,17 @@ class SchoolTrafficControlNode(Node):
 
         self._cancel_goal(self._nav_goal_handle)
 
+        self._nav_request_id += 1
+        request_id = self._nav_request_id
+
         if not self._nav_client.wait_for_server(timeout_sec=1.0):
             self.get_logger().warn('go_to_xy_phi action server not available')
             self._nav_done = True
             return
 
         future = self._nav_client.send_goal_async(goal)
-        future.add_done_callback(self._nav_goal_response_cb)
+        future.add_done_callback(
+            lambda fut, rid=request_id: self._nav_goal_response_cb(fut, rid))
 
     def _send_motion(self, motion_name: str):
         goal = PlayMotion2.Goal()
@@ -341,13 +358,17 @@ class SchoolTrafficControlNode(Node):
 
         self._cancel_goal(self._motion_goal_handle)
 
+        self._motion_request_id += 1
+        request_id = self._motion_request_id
+
         if not self._motion_client.wait_for_server(timeout_sec=1.0):
             self.get_logger().warn('play_motion2 action server not available')
             self._motion_done = True
             return
 
         future = self._motion_client.send_goal_async(goal)
-        future.add_done_callback(self._motion_goal_response_cb)
+        future.add_done_callback(
+            lambda fut, rid=request_id: self._motion_goal_response_cb(fut, rid))
 
     def _send_say(self, text: str):
         goal = Say.Goal()
@@ -385,21 +406,33 @@ class SchoolTrafficControlNode(Node):
         if goal_handle is not None and goal_handle.status in (1, 2):  # ACCEPTED, EXECUTING
             goal_handle.cancel_goal_async()
 
-    def _nav_goal_response_cb(self, future):
+    def _nav_goal_response_cb(self, future, request_id):
         goal_handle = future.result()
         if not goal_handle or not goal_handle.accepted:
             self.get_logger().warn('go_to_xy_phi goal rejected')
             self._nav_done = True
             return
+        if request_id != self._nav_request_id:
+            # A newer nav goal was requested while this one was in flight —
+            # it was accepted too late to be cancelled up front, so cancel
+            # it now instead of letting it run alongside the newer goal.
+            goal_handle.cancel_goal_async()
+            return
         self._nav_goal_handle = goal_handle
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._nav_result_cb)
 
-    def _motion_goal_response_cb(self, future):
+    def _motion_goal_response_cb(self, future, request_id):
         goal_handle = future.result()
         if not goal_handle or not goal_handle.accepted:
             self.get_logger().warn('play_motion2 goal rejected')
             self._motion_done = True
+            return
+        if request_id != self._motion_request_id:
+            # Same race as above: this motion was superseded before it was
+            # even accepted. Cancel it so it doesn't run alongside the arm
+            # motion that's now current.
+            goal_handle.cancel_goal_async()
             return
         self._motion_goal_handle = goal_handle
         result_future = goal_handle.get_result_async()
