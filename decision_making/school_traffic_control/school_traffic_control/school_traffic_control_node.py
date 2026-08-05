@@ -134,8 +134,9 @@ class SchoolTrafficControlNode(Node):
         #self._motion_pass = self.get_parameter('motion_pass').value
         self._motion_default = "initial_pose"
         self._motion_stop_init = "norway_stop_init"
-        self._motion_stop = "norway_init_stop"
-        self._motion_pass = "norway_init_pass"
+        self._motion_init_stop = "norway_init_stop"
+        self._motion_init_pass = "norway_init_pass"
+        self._motion_pass_wave = "norway_pass_wave"
 
 
         self._range_near = float(self.get_parameter('range_near_m').value)
@@ -254,6 +255,10 @@ class SchoolTrafficControlNode(Node):
             if target_vehicle is None:
                 # Vehicle has passed through — head back immediately.
                 self._enter_returning()
+            else:
+                #wave with the arm to allow vehicle to pass
+                self._passing_vehicle()
+
 
         elif self._state == State.RETURNING:
             if self._nav_done and self._motion_done:
@@ -274,13 +279,14 @@ class SchoolTrafficControlNode(Node):
     def _enter_vehicle_stop(self):
         self._state = State.VEHICLE_STOP
         self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture)')
-        self._send_motion(self._motion_stop)
+        self._send_motion(self._motion_init_stop)
 
     def _enter_vehicle_pass(self):
         self._state = State.VEHICLE_PASS
         self.get_logger().info('Plate allowed — state=VEHICLE_PASS (move to pose B + pass gesture)')
         #self._send_nav_goal(self._pose_b)
-        self._send_motion(self._motion_pass)
+        self._send_motion(self._motion_stop_init)
+        self._send_motion(self._motion_init_pass)
 
     def _enter_returning(self):
         self._state = State.RETURNING
@@ -288,12 +294,17 @@ class SchoolTrafficControlNode(Node):
         self._motion_done = False
         self.get_logger().info('Vehicle passed — state=RETURNING (move to pose A + default gesture)')
         #self._send_nav_goal(self._pose_a)
-        self._send_motion(self._motion_default)
+        self._send_motion(self._motion_pass_init)
 
     def _enter_idle(self):
         self._state = State.MIDDLE_IDLE
         self.get_logger().info('Vehicle left range — state=MIDDLE_IDLE (default gesture)')
         self._send_motion(self._motion_stop_init)
+
+    def _passing_vehicle(self):
+        self.get_logger().info('Plate allowed — state=VEHICLE_PASS (waving)')
+        self._send_motion(self._motion_pass_wave)
+
 
     # ── Action helpers ───────────────────────────────────────────────────
 
