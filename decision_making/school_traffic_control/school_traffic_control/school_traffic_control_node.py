@@ -132,7 +132,7 @@ class SchoolTrafficControlNode(Node):
         #self._motion_default = self.get_parameter('motion_default').value
         #self._motion_stop = self.get_parameter('motion_stop').value
         #self._motion_pass = self.get_parameter('motion_pass').value
-        self._motion_default = "norway_initial_pose"
+        self._motion_default = "initial_pose"
         self._motion_stop = "norway_init_stop"
         self._motion_pass = "norway_init_pass"
 
