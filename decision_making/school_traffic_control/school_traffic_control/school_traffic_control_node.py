@@ -175,11 +175,9 @@ class SchoolTrafficControlNode(Node):
         self._motion_goal_handle = None
 
         # Bumped on every _send_nav_goal/_send_motion call so a goal
-        # acceptance callback can tell whether it's still the latest
-        # request. Without this, a goal that gets accepted late (after a
-        # newer one was already sent) would run alongside the newer goal
-        # instead of being cancelled, since _cancel_goal() is a no-op
-        # until the goal handle exists.
+        # acceptance/cancel-confirmation callback can tell whether it's
+        # still the latest request and discard itself otherwise — guards
+        # against a goal that becomes current only after being superseded.
         self._nav_request_id = 0
         self._motion_request_id = 0
 
@@ -336,16 +334,32 @@ class SchoolTrafficControlNode(Node):
     # ── Action helpers ───────────────────────────────────────────────────
 
     def _send_nav_goal(self, pose):
+        self._nav_request_id += 1
+        request_id = self._nav_request_id
+
+        handle = self._nav_goal_handle
+        if handle is not None and handle.status in (1, 2):  # ACCEPTED, EXECUTING
+            # Wait for the cancel to be confirmed before sending the next
+            # goal — the action server rejects a new goal while the
+            # previous one is still executing/being cancelled.
+            cancel_future = handle.cancel_goal_async()
+            cancel_future.add_done_callback(
+                lambda fut, rid=request_id, pose=pose: self._nav_cancel_done_cb(fut, rid, pose))
+            return
+
+        self._dispatch_nav_goal(pose, request_id)
+
+    def _nav_cancel_done_cb(self, future, request_id, pose):
+        if request_id != self._nav_request_id:
+            return  # superseded again while the cancel was in flight
+        self._dispatch_nav_goal(pose, request_id)
+
+    def _dispatch_nav_goal(self, pose, request_id):
         x, y, phi = pose
         goal = GoToXYPhi.Goal()
         goal.x = float(x)
         goal.y = float(y)
         goal.phi = float(phi)
-
-        self._cancel_goal(self._nav_goal_handle)
-
-        self._nav_request_id += 1
-        request_id = self._nav_request_id
 
         if not self._nav_client.wait_for_server(timeout_sec=1.0):
             self.get_logger().warn('go_to_xy_phi action server not available')
@@ -357,14 +371,29 @@ class SchoolTrafficControlNode(Node):
             lambda fut, rid=request_id: self._nav_goal_response_cb(fut, rid))
 
     def _send_motion(self, motion_name: str):
+        self._motion_request_id += 1
+        request_id = self._motion_request_id
+
+        handle = self._motion_goal_handle
+        if handle is not None and handle.status in (1, 2):  # ACCEPTED, EXECUTING
+            # Same reasoning as _send_nav_goal: wait for the cancel to be
+            # confirmed before dispatching the next motion.
+            cancel_future = handle.cancel_goal_async()
+            cancel_future.add_done_callback(
+                lambda fut, rid=request_id, name=motion_name: self._motion_cancel_done_cb(fut, rid, name))
+            return
+
+        self._dispatch_motion(motion_name, request_id)
+
+    def _motion_cancel_done_cb(self, future, request_id, motion_name):
+        if request_id != self._motion_request_id:
+            return  # superseded again while the cancel was in flight
+        self._dispatch_motion(motion_name, request_id)
+
+    def _dispatch_motion(self, motion_name, request_id):
         goal = PlayMotion2.Goal()
         goal.motion_name = motion_name
         goal.skip_planning = False
-
-        self._cancel_goal(self._motion_goal_handle)
-
-        self._motion_request_id += 1
-        request_id = self._motion_request_id
 
         if not self._motion_client.wait_for_server(timeout_sec=1.0):
             self.get_logger().warn('play_motion2 action server not available')
@@ -405,11 +434,6 @@ class SchoolTrafficControlNode(Node):
         self.get_logger().info(f'Say result: error_code={result.error_code} ({result.error_msg})')
         self._say_in_flight = False
         self._last_say_stamp = self.get_clock().now()
-
-    @staticmethod
-    def _cancel_goal(goal_handle):
-        if goal_handle is not None and goal_handle.status in (1, 2):  # ACCEPTED, EXECUTING
-            goal_handle.cancel_goal_async()
 
     def _nav_goal_response_cb(self, future, request_id):
         goal_handle = future.result()
