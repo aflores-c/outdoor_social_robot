@@ -129,9 +129,13 @@ class SchoolTrafficControlNode(Node):
             self.get_parameter('pose_b_phi_deg').value,
         )
 
-        self._motion_default = self.get_parameter('motion_default').value
-        self._motion_stop = self.get_parameter('motion_stop').value
-        self._motion_pass = self.get_parameter('motion_pass').value
+        #self._motion_default = self.get_parameter('motion_default').value
+        #self._motion_stop = self.get_parameter('motion_stop').value
+        #self._motion_pass = self.get_parameter('motion_pass').value
+        self._motion_default = "norway_initial_pose"
+        self._motion_stop = "norway_init_stop"
+        self._motion_pass = "norway_init_pass"
+
 
         self._range_near = float(self.get_parameter('range_near_m').value)
         self._range_far = float(self.get_parameter('range_far_m').value)
@@ -274,7 +278,7 @@ class SchoolTrafficControlNode(Node):
     def _enter_vehicle_pass(self):
         self._state = State.VEHICLE_PASS
         self.get_logger().info('Plate allowed — state=VEHICLE_PASS (move to pose B + pass gesture)')
-        self._send_nav_goal(self._pose_b)
+        #self._send_nav_goal(self._pose_b)
         self._send_motion(self._motion_pass)
 
     def _enter_returning(self):
@@ -282,7 +286,7 @@ class SchoolTrafficControlNode(Node):
         self._nav_done = False
         self._motion_done = False
         self.get_logger().info('Vehicle passed — state=RETURNING (move to pose A + default gesture)')
-        self._send_nav_goal(self._pose_a)
+        #self._send_nav_goal(self._pose_a)
         self._send_motion(self._motion_default)
 
     def _enter_idle(self):
