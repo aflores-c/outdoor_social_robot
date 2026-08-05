@@ -270,14 +270,19 @@ class SchoolTrafficControlNode(Node):
                 # Vehicle has passed through — head back immediately.
                 self._enter_returning()
             elif not self._motion_done:
-                # Still finishing the stop-init motion — wait for it before
-                # sending the pass gesture.
+                # Still finishing the previous motion (stop-init, the pass
+                # gesture, or a wave cycle) — wait for it before sending
+                # the next one instead of piling goals on top of it.
                 pass
             elif not self._pass_gesture_sent:
                 self._pass_gesture_sent = True
+                self._motion_done = False
                 self._send_motion(self._motion_init_pass)
             else:
-                #wave with the arm to allow vehicle to pass
+                # Keep waving while the vehicle is in range: only send a
+                # new wave once the previous one has finished, not on
+                # every 10 Hz tick.
+                self._motion_done = False
                 self._passing_vehicle()
 
 
