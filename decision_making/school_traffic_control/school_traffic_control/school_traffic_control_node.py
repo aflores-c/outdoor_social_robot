@@ -173,6 +173,15 @@ class SchoolTrafficControlNode(Node):
         self._nav_goal_handle = None
         self._motion_goal_handle = None
 
+        # Bumped on every _send_nav_goal/_send_motion call so a goal
+        # acceptance callback can tell whether it's still the latest
+        # request. Without this, a goal that gets accepted late (after a
+        # newer one was already sent) would run alongside the newer goal
+        # instead of being cancelled, since _cancel_goal() is a no-op
+        # until the goal handle exists.
+        self._nav_request_id = 0
+        self._motion_request_id = 0
+
         # Used only while in RETURNING, to know when both actions finished.
         self._nav_done = True
         self._motion_done = True
