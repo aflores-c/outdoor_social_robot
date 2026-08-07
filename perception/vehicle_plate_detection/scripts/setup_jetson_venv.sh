@@ -42,10 +42,17 @@ mkdir -p "$MARKER_DIR"
 source "$VENV_DIR/bin/activate"
 
 # 2. apt prereqs + ultralytics[export]
+#
+# apt update/install on this Jetson (custom "auvidea-agx-orin" carrier
+# board) always trips over unrelated, pre-existing broken nvidia-l4t-*
+# packages ("does not match any known boards") and exits non-zero, even
+# though the packages we actually need get handled fine — confirmed
+# harmless (same thing happens for the yolo_ros venv, which works). Don't
+# let `set -e` treat that as fatal here.
 if ! step_done 02_ultralytics; then
     echo "[2/7] Installing apt prerequisites + ultralytics[export]"
-    sudo apt update
-    sudo apt install -y python3-pip
+    sudo apt update || echo "  (ignoring known-harmless apt exit code on this board)"
+    sudo apt install -y python3-pip || echo "  (ignoring known-harmless apt exit code on this board)"
     pip install -U pip
     pip install "ultralytics[export]"
     mark_done 02_ultralytics
@@ -91,8 +98,11 @@ if ! step_done 05_cudss; then
         https://developer.download.nvidia.com/compute/cudss/0.7.1/local_installers/cudss-local-tegra-repo-ubuntu2204-0.7.1_0.7.1-1_arm64.deb
     sudo dpkg -i "$DEB_PATH"
     sudo cp /var/cudss-local-tegra-repo-ubuntu2204-0.7.1/cudss-*-keyring.gpg /usr/share/keyrings/
-    sudo apt-get update
-    sudo apt-get -y install cudss
+    # See the note on step 2 — ignore this board's known-harmless apt exit
+    # code, but explicitly verify cudss itself actually landed.
+    sudo apt-get update || echo "  (ignoring known-harmless apt exit code on this board)"
+    sudo apt-get -y install cudss || echo "  (ignoring known-harmless apt exit code on this board)"
+    dpkg -s cudss >/dev/null 2>&1 || { echo "ERROR: cudss did not actually install — check apt output above."; exit 1; }
     rm -f "$DEB_PATH"
     mark_done 05_cudss
 else
