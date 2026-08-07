@@ -12,9 +12,9 @@ vehicle through. Once the vehicle has left the range, the robot immediately
 returns to the middle pose with the default gesture.
 
 A pedestrian within the alert range is handled separately from the state
-machine: the robot only speaks a warning through the Say skill and never
-changes its base pose or arm gesture because of a pedestrian — traffic
-control (the vehicle logic above) remains its only motion-driving task.
+machine: the robot only speaks a warning through TTS and never changes its
+base pose or arm gesture because of a pedestrian — traffic control (the
+vehicle logic above) remains its only motion-driving task.
 
 Inputs:
   <vehicles_topic>       traffic_perception_msgs/VehicleDetectionArray
@@ -24,7 +24,7 @@ Inputs:
 Outputs (action clients):
   <go_to_xy_phi_action>   base_navigation/action/GoToXYPhi      (base motion)
   <play_motion2_action>   play_motion2_msgs/action/PlayMotion2  (arm gesture)
-  <say_action>            communication_skills/action/Say       (pedestrian alert)
+  <tts_action>             tts_msgs/action/TTS                  (voice announcements)
 
 State machine (vehicles only):
   MIDDLE_IDLE   -> base at pose A, default arm gesture. Waiting for a vehicle.
@@ -47,7 +47,7 @@ from traffic_perception_msgs.msg import VehicleDetectionArray, PedestrianDetecti
 
 from base_navigation.action import GoToXYPhi
 from play_motion2_msgs.action import PlayMotion2
-from communication_skills.action import Say
+from tts_msgs.action import TTS
 
 
 class State(Enum):
@@ -69,7 +69,7 @@ class SchoolTrafficControlNode(Node):
 
         self.declare_parameter('go_to_xy_phi_action', 'go_to_xy_phi')
         self.declare_parameter('play_motion2_action', 'play_motion2')
-        self.declare_parameter('say_action', '/skill/say')
+        self.declare_parameter('tts_action', '/tts_engine/tts')
 
         # Pose A: middle of the road (default holding pose)
         self.declare_parameter('pose_a_x', 0.0)
@@ -100,8 +100,8 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('pedestrian_safety_gate', False)
         self.declare_parameter('pedestrian_zone_m', 5.0)
 
-        # Pedestrian alert: within this range, warn verbally via the Say
-        # skill — no base or arm motion is triggered by this.
+        # Pedestrian alert: within this range, warn verbally via TTS — no
+        # base or arm motion is triggered by this.
         self.declare_parameter('pedestrian_alert_range_m', 5.0)
         self.declare_parameter('pedestrian_alert_message', 'Caution, pedestrian, please stand clear.')
         self.declare_parameter('pedestrian_alert_cooldown_s', 5.0)
@@ -120,7 +120,7 @@ class SchoolTrafficControlNode(Node):
 
         go_to_xy_phi_action = self.get_parameter('go_to_xy_phi_action').value
         play_motion2_action = self.get_parameter('play_motion2_action').value
-        say_action = self.get_parameter('say_action').value
+        tts_action = self.get_parameter('tts_action').value
 
         self._pose_a = (
             self.get_parameter('pose_a_x').value,
@@ -176,7 +176,7 @@ class SchoolTrafficControlNode(Node):
         # ── Action clients ───────────────────────────────────────────────
         self._nav_client = ActionClient(self, GoToXYPhi, go_to_xy_phi_action)
         self._motion_client = ActionClient(self, PlayMotion2, play_motion2_action)
-        self._say_client = ActionClient(self, Say, say_action)
+        self._say_client = ActionClient(self, TTS, tts_action)
 
         self._nav_goal_handle = None
         self._motion_goal_handle = None
@@ -374,7 +374,7 @@ class SchoolTrafficControlNode(Node):
 
         self._nav_done = False
 
-        if not self._nav_client.wait_for_server(timeout_sec=1.0):
+        if not self._nav_client.wait_for_server(timeout_sec=0.0):
             self.get_logger().warn('go_to_xy_phi action server not available')
             self._nav_done = True
             return
@@ -413,7 +413,7 @@ class SchoolTrafficControlNode(Node):
 
         self._motion_done = False
 
-        if not self._motion_client.wait_for_server(timeout_sec=1.0):
+        if not self._motion_client.wait_for_server(timeout_sec=0.0):
             self.get_logger().warn('play_motion2 action server not available')
             self._motion_done = True
             return
@@ -432,19 +432,17 @@ class SchoolTrafficControlNode(Node):
 
     def _send_say(self, text: str):
         if self._say_in_flight:
-            # Don't overlap Say goals — vehicle-stop/pass announcements and
+            # Don't overlap TTS goals — vehicle-stop/pass announcements and
             # the pedestrian alert all share this one action client.
             return
 
-        goal = Say.Goal()
-        goal.meta.caller = self.get_name()
-        goal.meta.priority = goal.meta.NORMAL_PRIORITY
-        goal.person_id = ''
-        goal.group_id = ''
+        goal = TTS.Goal()
         goal.input = text
+        goal.locale = 'en_US'
+        goal.voice = ''
 
-        if not self._say_client.wait_for_server(timeout_sec=1.0):
-            self.get_logger().warn('Say action server not available')
+        if not self._say_client.wait_for_server(timeout_sec=0.0):
+            self.get_logger().warn('TTS action server not available')
             return
 
         self._say_in_flight = True
@@ -454,15 +452,17 @@ class SchoolTrafficControlNode(Node):
     def _say_goal_response_cb(self, future):
         goal_handle = future.result()
         if not goal_handle or not goal_handle.accepted:
-            self.get_logger().warn('Say goal rejected')
+            self.get_logger().warn('TTS goal rejected')
             self._say_in_flight = False
             return
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._say_result_cb)
 
     def _say_result_cb(self, future):
-        result = future.result().result.result
-        self.get_logger().info(f'Say result: error_code={result.error_code} ({result.error_msg})')
+        # Field names on tts_msgs/action/TTS's Result aren't vendored in
+        # this workspace to check, so only the generic goal status (always
+        # present on any action's WrappedResult) is logged here.
+        self.get_logger().info(f'TTS result: status={future.result().status}')
         self._say_in_flight = False
         self._last_say_stamp = self.get_clock().now()
 

@@ -8,8 +8,9 @@
     pedestrian detections (traffic_perception_msgs) and a plate-allowed
     bool, and drives the robot base (base_navigation GoToXYPhi action) and
     arm gestures (play_motion2 PlayMotion2 action) to hold, stop, and wave
-    vehicles through a crossing. Pedestrians only trigger a spoken warning
-    via the communication_skills Say action and never affect motion.
+    vehicles through a crossing. Pedestrians and vehicle stop/pass events
+    only trigger a spoken announcement via the tts_engine TTS action and
+    never affect motion.
   </description>
   <maintainer email="andy.flores@pucp.edu.pe">Andy Flores</maintainer>
   <license>MIT</license>
@@ -24,9 +25,9 @@
   <depend>traffic_perception_msgs</depend>
   <depend>base_navigation</depend>
   <depend>play_motion2_msgs</depend>
-  <!-- https://github.com/pal-robotics/communication_skills — not vendored in
-       this workspace yet; also pulls in std_skills and chatbot_msgs. -->
-  <depend>communication_skills</depend>
+  <!-- tts_msgs (PAL tts_engine) — not vendored in this dev workspace,
+       available on-robot only. -->
+  <depend>tts_msgs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

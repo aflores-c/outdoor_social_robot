@@ -5,10 +5,10 @@ school_traffic_control_node:
     pedestrians_topic: /perception/pedestrians
     plate_allowed_topic: /perception/plate_allowed
 
-    # Action servers (base_navigation, play_motion2 and communication_skills bringup)
+    # Action servers (base_navigation, play_motion2 and tts_engine bringup)
     go_to_xy_phi_action: go_to_xy_phi
     play_motion2_action: play_motion2
-    say_action: /skill/say
+    tts_action: /tts_engine/tts
 
     # Pose A — middle of the road, default holding position
     # Captured via `ros2 run tf2_ros tf2_echo map base_link` at the robot's
@@ -40,14 +40,14 @@ school_traffic_control_node:
     pedestrian_safety_gate: false
     pedestrian_zone_m: 5.0
 
-    # Pedestrian alert: within this range, warn verbally via the Say skill.
+    # Pedestrian alert: within this range, warn verbally via TTS.
     # This never affects base/arm motion — traffic control stays the only
     # motion-driving task.
     pedestrian_alert_range_m: 5.0
     pedestrian_alert_message: "Caution, pedestrian, please stand clear."
     pedestrian_alert_cooldown_s: 5.0
 
-    # Voice announcements on vehicle state transitions, via the Say skill.
+    # Voice announcements on vehicle state transitions, via TTS.
     vehicle_stop_message: "Stop, please. Let the children cross."
     vehicle_pass_message: "You may proceed."
 
