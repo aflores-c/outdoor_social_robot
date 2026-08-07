@@ -47,6 +47,10 @@ school_traffic_control_node:
     pedestrian_alert_message: "Caution, pedestrian, please stand clear."
     pedestrian_alert_cooldown_s: 5.0
 
+    # Voice announcements on vehicle state transitions, via the Say skill.
+    vehicle_stop_message: "Stop, please. Let the children cross."
+    vehicle_pass_message: "You may proceed."
+
     # Sensor messages older than this are treated as stale/unknown
     message_timeout_s: 1.0
     control_rate_hz: 10.0

@@ -106,6 +106,10 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('pedestrian_alert_message', 'Caution, pedestrian, please stand clear.')
         self.declare_parameter('pedestrian_alert_cooldown_s', 5.0)
 
+        # Voice announcements on vehicle state transitions.
+        self.declare_parameter('vehicle_stop_message', 'Stop, please. Let the children cross.')
+        self.declare_parameter('vehicle_pass_message', 'You may proceed.')
+
         # Messages older than this are treated as stale/unknown.
         self.declare_parameter('message_timeout_s', 1.0)
         self.declare_parameter('control_rate_hz', 10.0)
@@ -150,6 +154,9 @@ class SchoolTrafficControlNode(Node):
         self._pedestrian_alert_message = self.get_parameter('pedestrian_alert_message').value
         self._pedestrian_alert_cooldown = Duration(
             seconds=float(self.get_parameter('pedestrian_alert_cooldown_s').value))
+
+        self._vehicle_stop_message = self.get_parameter('vehicle_stop_message').value
+        self._vehicle_pass_message = self.get_parameter('vehicle_pass_message').value
 
         self._msg_timeout = Duration(seconds=float(self.get_parameter('message_timeout_s').value))
         control_rate_hz = float(self.get_parameter('control_rate_hz').value)
@@ -298,7 +305,7 @@ class SchoolTrafficControlNode(Node):
 
     def _maybe_alert_pedestrian(self):
         """Speak a warning when a pedestrian is close. Never touches motion."""
-        if not self._pedestrian_in_alert_range() or self._say_in_flight:
+        if not self._pedestrian_in_alert_range():
             return
         if self._last_say_stamp is not None and (self.get_clock().now() - self._last_say_stamp) < \
                 self._pedestrian_alert_cooldown:
@@ -311,6 +318,7 @@ class SchoolTrafficControlNode(Node):
         self._state = State.VEHICLE_STOP
         self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture)')
         self._send_motion(self._motion_init_stop)
+        self._send_say(self._vehicle_stop_message)
 
     def _enter_vehicle_pass(self):
         self._state = State.VEHICLE_PASS
@@ -318,6 +326,7 @@ class SchoolTrafficControlNode(Node):
         self.get_logger().info('Plate allowed — state=VEHICLE_PASS (move to pose B, stop-init motion, then pass gesture)')
         self._send_nav_goal(self._pose_b)
         self._send_motion(self._motion_stop_init)
+        self._send_say(self._vehicle_pass_message)
 
     def _enter_returning(self):
         self._state = State.RETURNING
@@ -422,6 +431,11 @@ class SchoolTrafficControlNode(Node):
             self._dispatch_motion(motion_name, request_id)
 
     def _send_say(self, text: str):
+        if self._say_in_flight:
+            # Don't overlap Say goals — vehicle-stop/pass announcements and
+            # the pedestrian alert all share this one action client.
+            return
+
         goal = Say.Goal()
         goal.meta.caller = self.get_name()
         goal.meta.priority = goal.meta.NORMAL_PRIORITY
