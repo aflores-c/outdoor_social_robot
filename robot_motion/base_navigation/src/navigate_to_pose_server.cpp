@@ -85,13 +85,32 @@ private:
         nav2_goal.pose.pose.position.z    = 0.0;
         nav2_goal.pose.pose.orientation   = tf2::toMsg(q);
 
-        // Shared state for synchronisation between callbacks and this thread
-        bool nav2_done     = false;
-        bool nav2_success  = false;
+        // Shared state for synchronisation between callbacks and this thread.
+        // Goal acceptance is delivered asynchronously via
+        // goal_response_callback below — invoked by this node's own
+        // executor (the one spinning in main()) — instead of blocking this
+        // worker thread on rclcpp::spin_until_future_complete(), which
+        // would add this node to a second executor and crash the process
+        // ("Node has already been added to an executor.").
+        bool nav2_responded = false;
+        bool nav2_accepted  = false;
+        bool nav2_done      = false;
+        bool nav2_success   = false;
+        std::shared_ptr<GoalHandleNav> nav2_goal_handle;
         std::mutex mtx;
         std::condition_variable cv;
 
         auto send_opts = rclcpp_action::Client<Nav2Action>::SendGoalOptions();
+
+        send_opts.goal_response_callback =
+            [&](const GoalHandleNav::SharedPtr & handle)
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                nav2_goal_handle = handle;
+                nav2_accepted    = (handle != nullptr);
+                nav2_responded   = true;
+                cv.notify_one();
+            };
 
         send_opts.feedback_callback =
             [this, goal_handle, &mtx](
@@ -115,25 +134,15 @@ private:
                 cv.notify_one();
             };
 
-        // Cancel nav2 goal if our goal is cancelled
-        std::shared_ptr<GoalHandleNav> nav2_goal_handle;
-        auto goal_response_future = nav2_client_->async_send_goal(nav2_goal, send_opts);
+        nav2_client_->async_send_goal(nav2_goal, send_opts);
 
-        // Wait for goal to be accepted
-        if (rclcpp::spin_until_future_complete(
-                this->get_node_base_interface(), goal_response_future)
-            != rclcpp::FutureReturnCode::SUCCESS)
+        // Wait for nav2 to accept/reject the goal.
         {
-            RCLCPP_ERROR(this->get_logger(), "Failed to send goal to nav2");
-            auto result = std::make_shared<GoToXYPhi::Result>();
-            result->success = false;
-            result->message = "Failed to send goal to NavigateToPose";
-            goal_handle->abort(result);
-            return;
+            std::unique_lock<std::mutex> lock(mtx);
+            cv.wait(lock, [&] { return nav2_responded; });
         }
 
-        nav2_goal_handle = goal_response_future.get();
-        if (!nav2_goal_handle) {
+        if (!nav2_accepted) {
             RCLCPP_ERROR(this->get_logger(), "nav2 rejected the goal");
             auto result = std::make_shared<GoToXYPhi::Result>();
             result->success = false;
