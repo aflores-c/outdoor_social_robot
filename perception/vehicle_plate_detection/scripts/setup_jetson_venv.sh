@@ -109,11 +109,18 @@ else
     echo "[5/7] cuDSS already installed — skipping"
 fi
 
-# 6. easyocr — safe here: this venv is isolated from yolo_ros, so its
-# numpy upgrade can't touch tensorflow elsewhere.
+# 6. easyocr — isolated from yolo_ros (no tensorflow here to conflict
+# with), but easyocr's own unpinned `numpy` dependency still defaults to
+# numpy>=2 if left unconstrained, which breaks the *system* cv_bridge and
+# matplotlib (both precompiled against numpy 1.x's ABI, needed by
+# plate_detector_node.py and ultralytics respectively). Constrain numpy
+# alongside easyocr in the same pip call so the resolver picks
+# numpy<2-compatible releases of easyocr's transitive deps
+# (scikit-image/scipy/opencv-python-headless/etc.) from the start, rather
+# than installing numpy>=2 versions of those and breaking cv_bridge/matplotlib.
 if ! step_done 06_easyocr; then
-    echo "[6/7] Installing easyocr"
-    pip install easyocr
+    echo "[6/7] Installing easyocr (numpy<2 constrained)"
+    pip install "numpy<2" easyocr
     mark_done 06_easyocr
 else
     echo "[6/7] easyocr already installed — skipping"

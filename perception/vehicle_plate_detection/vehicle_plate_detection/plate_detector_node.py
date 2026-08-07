@@ -42,7 +42,7 @@ import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Bool, String
 
 import torch
@@ -116,7 +116,13 @@ class PlateDetectorNode(Node):
         self._bridge = CvBridge()
 
         # ── Subscriber ────────────────────────────────────────────────────────
-        self.create_subscription(Image, rgb_topic, self._cb, qos_profile_sensor_data)
+        # Compressed transport: on this deployment the camera stream crosses
+        # wifi from the robot's onboard PC to the jetson, so subscribing to
+        # <rgb_topic>/compressed (sensor_msgs/CompressedImage) instead of the
+        # raw topic is what actually reaches this node. Decoded via cv_bridge
+        # below (same pattern as traffic_object_detection).
+        rgb_compressed_topic = rgb_topic + '/compressed'
+        self.create_subscription(CompressedImage, rgb_compressed_topic, self._cb, qos_profile_sensor_data)
 
         # ── Publishers ────────────────────────────────────────────────────────
         self._pub_allowed = self.create_publisher(Bool, plate_allowed_topic, 10)
@@ -126,7 +132,7 @@ class PlateDetectorNode(Node):
         self.get_logger().info(
             f'\n{"=" * 58}\n'
             f'  Vehicle Plate Detector\n'
-            f'  RGB:    {rgb_topic}\n'
+            f'  RGB:    {rgb_compressed_topic}\n'
             f'  Model:  {model_path}  |  conf={self._conf}\n'
             f'  GPU:    {torch.cuda.get_device_name(0)}\n'
             f'  Registered plates: {len(self._registered)}\n'
@@ -141,14 +147,14 @@ class PlateDetectorNode(Node):
 
     # ── Main callback ──────────────────────────────────────────────────────
 
-    def _cb(self, img_msg: Image):
+    def _cb(self, img_msg: CompressedImage):
         now = time.monotonic()
         if self._check_period > 0.0 and (now - self._last_check_t) < self._check_period:
             return
         self._last_check_t = now
 
         try:
-            frame = self._bridge.imgmsg_to_cv2(img_msg, 'bgr8')
+            frame = self._bridge.compressed_imgmsg_to_cv2(img_msg, 'bgr8')
         except Exception as e:
             self.get_logger().warn(f'Image conversion: {e}', throttle_duration_sec=5.0)
             return

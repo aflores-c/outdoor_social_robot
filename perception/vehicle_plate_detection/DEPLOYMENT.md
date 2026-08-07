@@ -75,18 +75,49 @@ sudo apt-get update && sudo apt-get -y install cudss
 
 ## 5. Install easyocr
 
-Safe to install freely now — this venv is isolated from `yolo_ros`, so
-`easyocr` upgrading `numpy` here can't break `tensorflow` elsewhere:
+This venv is isolated from `yolo_ros`, so `easyocr` upgrading `numpy` here
+can't break `tensorflow` elsewhere — but it can still break **this** venv:
+left unconstrained, `easyocr`'s own dependency resolution defaults to
+`numpy>=2`, which breaks the *system* `cv_bridge` and `matplotlib` (both
+precompiled against `numpy` 1.x's ABI — `cv_bridge` is needed directly by
+`plate_detector_node.py`, `matplotlib` gets pulled in transitively by
+`ultralytics`). Constrain `numpy` in the same `pip install` call as
+`easyocr`, so the resolver picks `numpy<2`-compatible releases of
+`easyocr`'s transitive deps (`scikit-image`/`scipy`/`opencv-python-headless`/
+etc.) from the start, rather than installing `numpy>=2` versions of those
+and only discovering the ABI break later:
 
 ```bash
-pip install easyocr
+pip install "numpy<2" easyocr
 ```
 
-## 6. Verify torch sees CUDA
+## 6. Verify everything imports together
 
 ```bash
-python3 -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+python3 - <<'PYEOF'
+import traceback
+
+def check(name, fn):
+    try:
+        fn()
+        print(f"PASS: {name}")
+    except Exception as e:
+        print(f"FAIL: {name} -> {e!r}")
+        traceback.print_exc()
+
+check("numpy", lambda: __import__("numpy"))
+check("torch+cuda", lambda: (lambda t: (_ for _ in ()).throw(RuntimeError("no CUDA")) if not t.cuda.is_available() else None)(__import__("torch")))
+check("ultralytics.YOLO", lambda: __import__("ultralytics", fromlist=["YOLO"]).YOLO)
+check("easyocr", lambda: __import__("easyocr"))
+check("cv_bridge", lambda: __import__("cv_bridge"))
+check("rclpy", lambda: __import__("rclpy"))
+PYEOF
 ```
+
+All six must print `PASS:` — this is worth checking explicitly rather than
+just CUDA availability, since `torch`/CUDA can be fine while `cv_bridge` or
+`ultralytics.YOLO` is silently broken by a `numpy` ABI mismatch (this
+happened once already — see the note at the top of this doc).
 
 Should print `CUDA available: True`. If not, stop here and recheck steps 3–4
 before continuing — a CPU-only plate detector will be far too slow for
