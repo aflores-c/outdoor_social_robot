@@ -315,14 +315,14 @@ class SchoolTrafficControlNode(Node):
     def _enter_vehicle_pass(self):
         self._state = State.VEHICLE_PASS
         self._pass_gesture_sent = False
-        self.get_logger().info('Plate allowed — state=VEHICLE_PASS (stop-init motion, then pass gesture)')
-        #self._send_nav_goal(self._pose_b)
+        self.get_logger().info('Plate allowed — state=VEHICLE_PASS (move to pose B, stop-init motion, then pass gesture)')
+        self._send_nav_goal(self._pose_b)
         self._send_motion(self._motion_stop_init)
 
     def _enter_returning(self):
         self._state = State.RETURNING
         self.get_logger().info('Vehicle passed — state=RETURNING (move to pose A + default gesture)')
-        #self._send_nav_goal(self._pose_a)  # nav disabled — leave _nav_done at its default True
+        self._send_nav_goal(self._pose_a)
         self._send_motion(self._motion_pass_init)
 
     def _enter_idle(self):
