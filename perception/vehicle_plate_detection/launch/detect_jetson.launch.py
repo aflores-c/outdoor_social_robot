@@ -26,6 +26,7 @@ def generate_launch_description():
 
     default_config = os.path.join(pkg_detection, 'config', 'plate_detection.yaml')
     default_plates = os.path.join(pkg_detection, 'config', 'registered_plates.yaml')
+    default_model = os.path.join(pkg_detection, 'models', 'license_plate_detector.pt')
 
     config_arg = DeclareLaunchArgument(
         'config_file', default_value=default_config,
@@ -36,7 +37,7 @@ def generate_launch_description():
         description='Path to registered_plates.yaml (school allow-list)',
     )
     model_arg = DeclareLaunchArgument(
-        'plate_model', default_value='license_plate_yolov8n.pt',
+        'plate_model', default_value=default_model,
         description='Plate-detector YOLO weights (.pt or .engine)',
     )
 

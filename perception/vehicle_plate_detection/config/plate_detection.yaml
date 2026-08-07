@@ -7,8 +7,11 @@ plate_detector_node:
     # ── Plate detector ───────────────────────────────────────────────────
     # This must be a YOLO model FINE-TUNED on license plates — the COCO
     # weights used by traffic_object_detection have no "plate" class.
-    # Point this at your trained .pt/.engine weights.
-    plate_model: "license_plate_yolov8n.pt"
+    # This bare filename only resolves if the process's cwd happens to
+    # contain it — the launch files (detect.launch.py / detect_jetson.launch.py)
+    # override this with the proper installed share/models/ path, so prefer
+    # those over `ros2 run` with just this yaml.
+    plate_model: "license_plate_detector.pt"
     confidence: 0.50
 
     # ── OCR (EasyOCR) ────────────────────────────────────────────────────
