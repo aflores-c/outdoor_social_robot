@@ -25,7 +25,8 @@
 
   <depend>python3-numpy</depend>
   <depend>python3-opencv</depend>
-  <!-- ultralytics + torch + easyocr installed via pip — see setup instructions -->
+  <!-- ultralytics, easyocr (and torch, separately) installed via pip —
+       see requirements.txt -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -1,0 +1,14 @@
+# Python (pip) dependencies for vehicle_plate_detection, not resolvable via
+# rosdep/apt — install into whatever venv runs plate_detector_node, e.g.
+# on the Jetson: source /home/pal/venvs/yolo_ros/bin/activate
+#
+#   pip install -r requirements.txt
+#
+# torch is intentionally NOT listed here: on Jetson it must come from
+# NVIDIA's own ARM64+CUDA-matched wheel (matching the installed JetPack/L4T
+# version), not the generic PyPI package — installing `torch` from this
+# file would silently replace that with an incompatible build. Install/verify
+# torch separately first, then install the rest of this file.
+
+ultralytics
+easyocr
