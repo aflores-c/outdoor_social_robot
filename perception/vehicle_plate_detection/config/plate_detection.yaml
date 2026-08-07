@@ -2,7 +2,7 @@ plate_detector_node:
   ros__parameters:
 
     # ── Sensor topic ─────────────────────────────────────────────────────
-    rgb_topic: "/camera/realsense2_camera/color/image_raw"
+    rgb_topic: "/head_front_camera/color/image_raw"
 
     # ── Plate detector ───────────────────────────────────────────────────
     # This must be a YOLO model FINE-TUNED on license plates — the COCO
