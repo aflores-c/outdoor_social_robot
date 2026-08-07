@@ -1,14 +1,17 @@
 # Python (pip) dependencies for vehicle_plate_detection, not resolvable via
-# rosdep/apt — install into whatever venv runs plate_detector_node, e.g.
-# on the Jetson: source /home/pal/venvs/yolo_ros/bin/activate
+# rosdep/apt.
 #
-#   pip install -r requirements.txt
+# On Jetson: install into a DEDICATED venv for this package, NOT the
+# yolo_ros venv shared with traffic_object_detection/semantic_segmentation —
+# easyocr's dependency tree force-upgrades numpy past what tensorflow in
+# yolo_ros tolerates. See DEPLOYMENT.md for the full ordered install
+# procedure (this file alone, via `pip install -r requirements.txt`, will
+# NOT produce a working install — torch must come from a Jetson-specific
+# wheel installed *between* ultralytics and easyocr, not from PyPI).
 #
-# torch is intentionally NOT listed here: on Jetson it must come from
-# NVIDIA's own ARM64+CUDA-matched wheel (matching the installed JetPack/L4T
-# version), not the generic PyPI package — installing `torch` from this
-# file would silently replace that with an incompatible build. Install/verify
-# torch separately first, then install the rest of this file.
+# torch is intentionally NOT listed here for the same reason: on Jetson it
+# must come from NVIDIA's own ARM64+CUDA-matched wheel (see DEPLOYMENT.md
+# step 3), not the generic PyPI package.
 
-ultralytics
+ultralytics[export]
 easyocr

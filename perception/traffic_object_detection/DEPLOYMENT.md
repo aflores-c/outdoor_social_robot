@@ -90,7 +90,7 @@ ros2 launch traffic_object_detection detect_jetson.launch.py
 ```bash
 ros2 launch traffic_object_detection detect_jetson.launch.py \
     publish_calibrated_tf:=false \
-    config_file:=<path-to>/traffic_object_detection/config/detection_head_front.yaml
+    config_file:=/home/pal/ros2_ws/src/outdoor_social_robot/perception/traffic_object_detection/config/detection_head_front.yaml
 ```
 
 ## 5. Known issue: `/velodyne_points` dropping to 0

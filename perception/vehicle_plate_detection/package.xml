@@ -25,8 +25,8 @@
 
   <depend>python3-numpy</depend>
   <depend>python3-opencv</depend>
-  <!-- ultralytics, easyocr (and torch, separately) installed via pip —
-       see requirements.txt -->
+  <!-- ultralytics, easyocr (and torch, separately) installed via pip into
+       a DEDICATED venv (not yolo_ros) — see DEPLOYMENT.md, requirements.txt -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
