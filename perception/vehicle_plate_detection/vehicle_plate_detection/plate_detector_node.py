@@ -41,7 +41,7 @@ import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Bool, String
 
@@ -83,8 +83,14 @@ class PlateDetectorNode(Node):
         self.declare_parameter('plate_check_rate_hz', 5.0)
         self.declare_parameter('debug_fps', 5.0)
 
+        # Off by default; school_traffic_control turns this on (and
+        # traffic_object_detection off) while it's in VEHICLE_STOP, since
+        # running both heavy models at once is too much for one Jetson.
+        self.declare_parameter('enabled_topic', '/perception/plate_detection_enabled')
+
         rgb_topic          = self.get_parameter('rgb_topic').value
         plate_allowed_topic = self.get_parameter('plate_allowed_topic').value
+        enabled_topic        = self.get_parameter('enabled_topic').value
         model_path          = self.get_parameter('plate_model').value
         self._conf           = float(self.get_parameter('confidence').value)
         ocr_languages         = list(self.get_parameter('ocr_languages').value)
@@ -114,6 +120,18 @@ class PlateDetectorNode(Node):
 
         # ── Misc ──────────────────────────────────────────────────────────────
         self._bridge = CvBridge()
+
+        # ── Enable/disable switch (driven by school_traffic_control) ────────
+        # Defaults off: this model only runs once the state machine actually
+        # needs a plate read (VEHICLE_STOP), so traffic_object_detection can
+        # have the GPU the rest of the time.
+        self._enabled = False
+        enabled_qos = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(Bool, enabled_topic, self._on_enabled, enabled_qos)
 
         # ── Subscriber ────────────────────────────────────────────────────────
         # Compressed transport: on this deployment the camera stream crosses
@@ -145,9 +163,14 @@ class PlateDetectorNode(Node):
                 'rejected. Set it via config/registered_plates.yaml.'
             )
 
+    def _on_enabled(self, msg: Bool):
+        self._enabled = msg.data
+
     # ── Main callback ──────────────────────────────────────────────────────
 
     def _cb(self, img_msg: CompressedImage):
+        if not self._enabled:
+            return
         now = time.monotonic()
         if self._check_period > 0.0 and (now - self._last_check_t) < self._check_period:
             return
