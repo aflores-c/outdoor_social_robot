@@ -33,7 +33,10 @@ Published topics:
   /traffic_object_detection/pedestrians/markers  visualization_msgs/MarkerArray
   /traffic_object_detection/vehicles/poses       geometry_msgs/PoseArray   (velodyne frame)
   /traffic_object_detection/vehicles/markers     visualization_msgs/MarkerArray
-  /traffic_object_detection/debug_image          sensor_msgs/Image
+  /traffic_object_detection/debug_image          sensor_msgs/Image  (LiDAR-confirmed boxes; dropped
+                                          ones shown gray/"no LiDAR")
+  /traffic_object_detection/debug_image_yolo_only  sensor_msgs/Image  (raw YOLO boxes, no LiDAR
+                                          fusion involved — debug only)
 """
 
 import threading
@@ -68,6 +71,8 @@ BICYCLE_CLASSES = [1]           # bicycle — treated as a vehicle for stop/pass
                                  # a car, so vehicle_min_lidar_points would
                                  # drop real detections.
 ALL_CLASSES = PEDESTRIAN_CLASSES + VEHICLE_CLASSES + BICYCLE_CLASSES
+
+COCO_CLASS_NAMES = {0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
 
 
 def _quat_to_matrix(x: float, y: float, z: float, w: float) -> np.ndarray:
@@ -190,6 +195,11 @@ class TrafficObjectDetectorNode(Node):
         self._pub_veh_poses   = self.create_publisher(PoseArray, '/traffic_object_detection/vehicles/poses', 10)
         self._pub_veh_markers = self.create_publisher(MarkerArray, '/traffic_object_detection/vehicles/markers', 10)
         self._pub_debug       = self.create_publisher(Image, '/traffic_object_detection/debug_image', 5)
+        # Raw YOLO boxes only, no LiDAR fusion/sync/TF involved — lets you
+        # confirm what the detector alone sees, decoupled from whether
+        # anything gets confirmed/dropped by the LiDAR point-count filter.
+        self._pub_debug_yolo_only = self.create_publisher(
+            Image, '/traffic_object_detection/debug_image_yolo_only', 5)
 
         self._pub_pedestrians = self.create_publisher(PedestrianDetectionArray, pedestrians_topic, 10)
         self._pub_vehicles    = self.create_publisher(VehicleDetectionArray, vehicles_topic, 10)
@@ -214,7 +224,10 @@ class TrafficObjectDetectorNode(Node):
 
     def _dbg_image_only(self, img_msg: CompressedImage):
         """YOLO on every image frame, no LiDAR/sync/TF involved — isolates
-        whether GPU inference itself keeps up and finds anything at all."""
+        whether the detector alone finds something, decoupled from whether
+        the LiDAR point-count filter later confirms/drops it. Publishes its
+        own debug image (boxes + class + confidence, no LiDAR overlay) to
+        /traffic_object_detection/debug_image_yolo_only."""
         if not self._enabled:
             return
         self._dbg_bump('img')
@@ -224,8 +237,31 @@ class TrafficObjectDetectorNode(Node):
             self.get_logger().warn(f'[DEBUG image-only] conversion failed: {e}', throttle_duration_sec=5.0)
             return
         results = self._model(frame, conf=self._conf, classes=ALL_CLASSES, device=self._device, verbose=False)
-        n = sum(len(r.boxes) if r.boxes is not None else 0 for r in results)
-        self.get_logger().info(f'[DEBUG image-only] yolo_boxes={n}', throttle_duration_sec=1.0)
+
+        by_class = {}
+        debug_img = frame
+        for r in results:
+            if r.boxes is None:
+                continue
+            boxes = r.boxes.xyxy.cpu().numpy()
+            confs = r.boxes.conf.cpu().numpy()
+            clses = r.boxes.cls.cpu().numpy().astype(int)
+            for (x1, y1, x2, y2), conf, cls_id in zip(boxes, confs, clses):
+                name = COCO_CLASS_NAMES.get(int(cls_id), str(int(cls_id)))
+                by_class[name] = by_class.get(name, 0) + 1
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 200, 255), 2)
+                cv2.putText(debug_img, f'{name} {conf:.2f}', (x1, max(y1 - 6, 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 2)
+
+        n = sum(by_class.values())
+        breakdown = ' '.join(f'{k}={v}' for k, v in sorted(by_class.items())) or 'none'
+        self.get_logger().info(f'[DEBUG image-only] yolo_boxes={n} ({breakdown})', throttle_duration_sec=1.0)
+
+        try:
+            self._pub_debug_yolo_only.publish(self._bridge.cv2_to_imgmsg(debug_img, 'bgr8'))
+        except Exception:
+            pass
 
     def _dbg_report(self):
         c = self._dbg_counts
