@@ -14,7 +14,7 @@ traffic_object_detector_node:
     camera_frame: "camera_color_optical_frame"
 
     # ── YOLO ─────────────────────────────────────────────────────────────
-    # Single pass, classes=[0,2,3,5,7] (person, car, motorcycle, bus, truck)
+    # Single pass, classes=[0,1,2,3,5,7] (person, bicycle, car, motorcycle, bus, truck)
     # — see traffic_object_detector_node.ALL_CLASSES
     # yolov8n.pt  → fastest, ~60fps on Jetson Orin
     # yolov8s.pt  → better accuracy, ~40fps
@@ -27,6 +27,7 @@ traffic_object_detector_node:
     # Vehicles are larger and typically produce more LiDAR returns.
     pedestrian_min_lidar_points: 5
     vehicle_min_lidar_points:    10
+    bicycle_min_lidar_points:    7
     # Discard LiDAR returns beyond this range (metres)
     max_range_m: 20.0
 
@@ -44,3 +45,8 @@ traffic_object_detector_node:
     # ── Output for decision_making/school_traffic_control ─────────────────
     pedestrians_topic: "/perception/pedestrians"
     vehicles_topic:    "/perception/vehicles"
+
+    # ── Perception load switching ───────────────────────────────────────
+    # On by default — school_traffic_control turns this off (and
+    # vehicle_plate_detection on) while VEHICLE_STOP needs a plate read.
+    enabled_topic: "/perception/traffic_object_detection_enabled"

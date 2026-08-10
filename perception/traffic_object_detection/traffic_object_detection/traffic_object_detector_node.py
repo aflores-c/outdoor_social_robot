@@ -3,10 +3,13 @@
 Combined pedestrian + vehicle detection via a single YOLO pass + LiDAR
 back-projection.
 
-yolov8n.pt is COCO-pretrained and already recognizes person (class 0) and
-car/motorcycle/bus/truck (classes 2/3/5/7) — there is no separate "vehicle
-model". Running one detector for both, instead of one YOLO instance per
-object type, halves the GPU inference cost on the Jetson Orin AGX.
+yolov8n.pt is COCO-pretrained and already recognizes person (class 0),
+bicycle (class 1), and car/motorcycle/bus/truck (classes 2/3/5/7) — there
+is no separate "vehicle model". Running one detector for both, instead of
+one YOLO instance per object type, halves the GPU inference cost on the
+Jetson Orin AGX. Bicycles are counted as vehicles for the stop/pass
+decision (see BICYCLE_CLASSES) but use their own, lower LiDAR point
+threshold given their much smaller physical profile.
 
 Pipeline per frame:
   1. YOLO detects persons + vehicles in the RGB image → 2D bounding boxes
@@ -42,9 +45,10 @@ from cv_bridge import CvBridge
 from geometry_msgs.msg import Point, Pose, PoseArray
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
+from std_msgs.msg import Bool
 from tf2_ros import Buffer, ConnectivityException, ExtrapolationException, LookupException, TransformListener
 from traffic_perception_msgs.msg import (
     PedestrianDetection, PedestrianDetectionArray,
@@ -58,7 +62,12 @@ from ultralytics import YOLO
 # COCO class ids
 PEDESTRIAN_CLASSES = [0]
 VEHICLE_CLASSES = [2, 3, 5, 7]   # car, motorcycle, bus, truck
-ALL_CLASSES = PEDESTRIAN_CLASSES + VEHICLE_CLASSES
+BICYCLE_CLASSES = [1]           # bicycle — treated as a vehicle for stop/pass
+                                 # decisions, but with its own (lower) LiDAR
+                                 # point threshold: much smaller profile than
+                                 # a car, so vehicle_min_lidar_points would
+                                 # drop real detections.
+ALL_CLASSES = PEDESTRIAN_CLASSES + VEHICLE_CLASSES + BICYCLE_CLASSES
 
 
 def _quat_to_matrix(x: float, y: float, z: float, w: float) -> np.ndarray:
@@ -83,6 +92,7 @@ class TrafficObjectDetectorNode(Node):
         self.declare_parameter('confidence',        0.40)
         self.declare_parameter('pedestrian_min_lidar_points', 5)
         self.declare_parameter('vehicle_min_lidar_points',    10)
+        self.declare_parameter('bicycle_min_lidar_points',    7)
         self.declare_parameter('sync_slop_s',       0.10)
         self.declare_parameter('lidar_frame',       'velodyne')
         self.declare_parameter('max_range_m',       20.0)
@@ -94,17 +104,23 @@ class TrafficObjectDetectorNode(Node):
         self.declare_parameter('ground_height_m',   1.74)
         self.declare_parameter('ground_margin_m',   0.15)
         self.declare_parameter('outlier_mad_k',     3.0)
+        # Runs by default; school_traffic_control turns this off (and
+        # vehicle_plate_detection on) while it's in VEHICLE_STOP, since
+        # running both heavy models at once is too much for one Jetson.
+        self.declare_parameter('enabled_topic', '/perception/traffic_object_detection_enabled')
 
         rgb_topic   = self.get_parameter('rgb_topic').value
         info_topic  = self.get_parameter('camera_info_topic').value
         lidar_topic = self.get_parameter('lidar_topic').value
         pedestrians_topic = self.get_parameter('pedestrians_topic').value
         vehicles_topic    = self.get_parameter('vehicles_topic').value
+        enabled_topic     = self.get_parameter('enabled_topic').value
         self._camera_frame = self.get_parameter('camera_frame').value
         model_path  = self.get_parameter('yolo_model').value
         self._conf              = float(self.get_parameter('confidence').value)
         self._min_pts_ped       = int(self.get_parameter('pedestrian_min_lidar_points').value)
         self._min_pts_veh       = int(self.get_parameter('vehicle_min_lidar_points').value)
+        self._min_pts_bike      = int(self.get_parameter('bicycle_min_lidar_points').value)
         self._lidar_frame       = self.get_parameter('lidar_frame').value
         self._max_range         = float(self.get_parameter('max_range_m').value)
         self._ground_z          = -(float(self.get_parameter('ground_height_m').value)
@@ -131,6 +147,17 @@ class TrafficObjectDetectorNode(Node):
         # ── Misc ──────────────────────────────────────────────────────────────
         self._bridge = CvBridge()
         self._lock   = threading.Lock()
+
+        # ── Enable/disable switch (driven by school_traffic_control) ────────
+        # Defaults on: this model runs unless explicitly told to stand down
+        # (while vehicle_plate_detection needs the GPU instead).
+        self._enabled = True
+        enabled_qos = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(Bool, enabled_topic, self._on_enabled, enabled_qos)
 
         # ── Subscribers (synchronized) ─────────────────────────────────────
         # Compressed transport for RGB: on this deployment the camera stream
@@ -178,6 +205,9 @@ class TrafficObjectDetectorNode(Node):
             f'{"=" * 58}'
         )
 
+    def _on_enabled(self, msg: Bool):
+        self._enabled = msg.data
+
     # ── DEBUG helpers ────────────────────────────────────────────────────
     def _dbg_bump(self, key):
         self._dbg_counts[key] += 1
@@ -185,6 +215,8 @@ class TrafficObjectDetectorNode(Node):
     def _dbg_image_only(self, img_msg: CompressedImage):
         """YOLO on every image frame, no LiDAR/sync/TF involved — isolates
         whether GPU inference itself keeps up and finds anything at all."""
+        if not self._enabled:
+            return
         self._dbg_bump('img')
         try:
             frame = self._bridge.compressed_imgmsg_to_cv2(img_msg, 'bgr8')
@@ -206,6 +238,8 @@ class TrafficObjectDetectorNode(Node):
     # ── Main callback ──────────────────────────────────────────────────────
 
     def _cb(self, img_msg: CompressedImage, info_msg: CameraInfo, pc_msg: PointCloud2):
+        if not self._enabled:
+            return
         self._dbg_counts['cb'] += 1
         # Camera intrinsics
         K = np.array(info_msg.k, dtype=np.float64).reshape(3, 3)
@@ -301,10 +335,20 @@ class TrafficObjectDetectorNode(Node):
 
             for (x1, y1, x2, y2), conf, cls_id in zip(boxes, confs, clses):
                 x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                is_vehicle = cls_id in VEHICLE_CLASSES
-                min_pts = self._min_pts_veh if is_vehicle else self._min_pts_ped
+                is_bicycle = cls_id in BICYCLE_CLASSES
+                # Bicycles count as vehicles for the stop/pass decision
+                # (published into the same vehicles_topic/poses_veh), but
+                # get their own (lower) LiDAR point threshold below — much
+                # smaller profile than a car.
+                is_vehicle = is_bicycle or cls_id in VEHICLE_CLASSES
+                if is_bicycle:
+                    min_pts = self._min_pts_bike
+                elif is_vehicle:
+                    min_pts = self._min_pts_veh
+                else:
+                    min_pts = self._min_pts_ped
                 color   = (0, 140, 255) if is_vehicle else (0, 220, 0)   # orange / green
-                kind    = 'vehicle' if is_vehicle else 'pedestrian'
+                kind    = 'bicycle' if is_bicycle else ('vehicle' if is_vehicle else 'pedestrian')
 
                 # LiDAR points inside this bounding box
                 inside = (px >= x1) & (px <= x2) & (py >= y1) & (py <= y2)
