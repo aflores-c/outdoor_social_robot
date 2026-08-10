@@ -5,6 +5,14 @@ school_traffic_control_node:
     pedestrians_topic: /perception/pedestrians
     plate_allowed_topic: /perception/plate_allowed
 
+    # Perception load switching: traffic_object_detection and
+    # vehicle_plate_detection are both heavy YOLO models the Jetson can't
+    # comfortably run at once, so only one runs at a time — traffic
+    # detection by default, switched to plate detection while VEHICLE_STOP
+    # is waiting on a plate read, then switched back.
+    traffic_detection_enabled_topic: /perception/traffic_object_detection_enabled
+    plate_detection_enabled_topic: /perception/plate_detection_enabled
+
     # Action servers (base_navigation, play_motion2 and tts_engine bringup)
     go_to_xy_phi_action: go_to_xy_phi
     play_motion2_action: play_motion2
@@ -34,6 +42,12 @@ school_traffic_control_node:
     # [range_near_m, range_far_m] meters
     range_near_m: 2.0
     range_far_m: 15.0
+
+    # VEHICLE_STOP fallback: traffic_object_detection is paused in this
+    # state (vehicle_plate_detection has the GPU instead), so we can't see
+    # the vehicle leave anymore. Give up and return to idle if no plate
+    # gets confirmed within this long.
+    vehicle_stop_timeout_s: 20.0
 
     # Optional safety gate (off by default): block the pass decision while a
     # pedestrian is within pedestrian_zone_m, even if the plate is allowed.
