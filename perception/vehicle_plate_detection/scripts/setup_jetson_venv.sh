@@ -15,6 +15,11 @@
 #
 # After this script finishes, follow DEPLOYMENT.md steps 8-9 to build
 # the ROS package against this venv and launch it.
+#
+# See also: setup_jetson_venv_fastalpr.sh, a separate/parallel venv for
+# the fast-alpr-based alternative node (plate_detector_fastalpr_node.py) —
+# this script and that one are independent, so both pipelines can be
+# built and tested side by side.
 
 set -eo pipefail
 

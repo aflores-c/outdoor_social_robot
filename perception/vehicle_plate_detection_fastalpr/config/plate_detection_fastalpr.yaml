@@ -1,0 +1,35 @@
+plate_detector_fastalpr_node:
+  ros__parameters:
+
+    # ── Sensor topic ─────────────────────────────────────────────────────
+    rgb_topic: "/head_front_camera/color/image_raw"
+
+    # ── fast-alpr models (ONNX, pretrained — downloaded/cached on first
+    # use, not a local weights file) ────────────────────────────────────
+    # See https://ankandrew.github.io/fast-alpr/latest/ for alternatives.
+    detector_model: "yolo-v9-t-384-license-plate-end2end"
+    ocr_model: "cct-xs-v2-global-model"
+    confidence: 0.50
+    ocr_min_confidence: 0.50
+    min_plate_chars: 4
+
+    # ── Throttling ───────────────────────────────────────────────────────
+    # Detect+OCR is the heaviest pipeline in this workspace — throttle it
+    # independently of camera fps.
+    plate_check_rate_hz: 5.0
+    debug_fps: 5.0
+
+    # ── Output for decision_making/school_traffic_control ─────────────────
+    # Same default topic as the original vehicle_plate_detection node —
+    # only run one of the two at a time if both are feeding
+    # school_traffic_control, or override this to a distinct topic for
+    # side-by-side comparison without one clobbering the other.
+    plate_allowed_topic: "/perception/plate_allowed"
+
+    # ── Perception load switching ───────────────────────────────────────
+    # Off by default — school_traffic_control turns this on (and
+    # traffic_object_detection off) only during CHECK_PLATE. Same topic as
+    # the original node, since school_traffic_control only knows about one
+    # "plate detection" concept — swap which package's launch file you run
+    # to choose which implementation actually responds to it.
+    enabled_topic: "/perception/plate_detection_enabled"

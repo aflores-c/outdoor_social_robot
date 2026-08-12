@@ -1,0 +1,18 @@
+# Python (pip) dependencies for vehicle_plate_detection_fastalpr, not
+# resolvable via rosdep/apt.
+#
+# On Jetson: install into a DEDICATED venv for this package (NOT
+# yolo_ros, NOT plate_detection — see DEPLOYMENT.md and
+# scripts/setup_jetson_venv_fastalpr.sh). Much lighter than the original
+# vehicle_plate_detection package's deps: no torch, no ultralytics, no
+# easyocr, no cuDSS — fast-alpr runs on ONNX Runtime with purpose-built
+# plate detection/OCR models.
+#
+# onnxruntime-gpu is intentionally NOT listed here: on Jetson it must
+# come from NVIDIA/Ultralytics' ARM64+CUDA-matched wheel for this
+# JetPack version (see DEPLOYMENT.md step 3), not the generic PyPI
+# package, which is x86_64-only. Install that FIRST, then this file —
+# fast-alpr's bare install (no [onnx-gpu] extra) just requires some
+# onnxruntime backend to already be importable.
+
+fast-alpr

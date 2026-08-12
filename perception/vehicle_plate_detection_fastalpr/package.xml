@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vehicle_plate_detection_fastalpr</name>
+  <version>0.1.0</version>
+  <description>
+    License plate detection + registration check, via the fast-alpr
+    library (ONNX Runtime + purpose-built plate detection/OCR models)
+    instead of a custom YOLO + EasyOCR pipeline. A separate package from
+    vehicle_plate_detection (the original pipeline) on purpose — both are
+    kept side by side so they can be built and tested independently
+    against their own dedicated venvs, and neither is meant to replace
+    the other yet. Publishes the same std_msgs/Bool allow-list decision,
+    consumed by decision_making/school_traffic_control.
+  </description>
+  <maintainer email="andy.flores@pucp.edu.pe">Andy Flores</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cv_bridge</depend>
+
+  <depend>python3-numpy</depend>
+  <depend>python3-opencv</depend>
+  <!-- fast-alpr (+ onnxruntime-gpu) installed via pip into a DEDICATED
+       venv — see DEPLOYMENT.md, requirements.txt, scripts/setup_jetson_venv_fastalpr.sh -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

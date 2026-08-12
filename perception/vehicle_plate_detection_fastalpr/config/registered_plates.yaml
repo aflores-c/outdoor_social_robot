@@ -1,0 +1,14 @@
+# The school's plate allow-list. Kept separate from
+# plate_detection_fastalpr.yaml so operations can update it without
+# touching detector tuning params. Matching is case-insensitive and
+# ignores spaces/dashes/dots — write plates however is convenient here.
+#
+# Keep this in sync with vehicle_plate_detection/config/registered_plates.yaml
+# (the original node's copy) — there's no automatic sharing between the
+# two packages.
+
+plate_detector_fastalpr_node:
+  ros__parameters:
+    registered_plates:
+      - "ABC-123"
+      - "XYZ 789"
