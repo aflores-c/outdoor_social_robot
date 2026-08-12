@@ -91,14 +91,11 @@ controller_server:
         offset_from_furthest: 4
         threshold_to_consider: 0.5
         max_angle_to_furthest: 1.0
-        # 0 (Forward Preference) actively penalizes the robot for not
-        # facing the path direction, incentivizing it to turn toward the
-        # path even when a direct sideways strafe would be more direct —
-        # exactly the unwanted "unnecessary turn" behavior on this
-        # omnidirectional base. 1 (No directional preference) is nav2's
-        # own recommended mode for when "a particular direction of travel
-        # is not preferable".
-        mode: 1
+        # Forward Preference — keeps the robot's heading aligned with the
+        # path direction (forward/backward), matching the tested/preferred
+        # behavior. Mode 1 (no directional preference) was tried and made
+        # things worse in practice — reverted.
+        mode: 0
       CostCritic:
         cost_weight: 10.0
 
