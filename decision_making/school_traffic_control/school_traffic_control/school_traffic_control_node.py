@@ -198,7 +198,7 @@ class SchoolTrafficControlNode(Node):
         self._motion_init_pass = "norway_init_pass"
         self._motion_pass_wave = "norway_pass_wave"
         self._motion_pass_init = "norway_pass_init"
-        self._motion_check_plate = "norway_check_plate"
+        self._motion_check_plate = "norway_head_down"
 
 
         self._range_near = float(self.get_parameter('range_near_m').value)
