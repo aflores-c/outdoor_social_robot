@@ -157,12 +157,12 @@ def generate_launch_description():
         executable='static_transform_publisher',
         arguments=[
             '--x', '-0.324889',
-            '--y', '-0.000000',
+            '--y', '0.000000',
             '--z', '0.700000',
-            '--qx', '0.003448',
-            '--qy', '0.034934',
-            '--qz', '-0.016860',
-            '--qw', '0.999241',
+            '--qx', '0.0',
+            '--qy', '0.0',
+            '--qz', '0.0',
+            '--qw', '1.0',
             '--frame-id', 'torso_lift_link',
             '--child-frame-id', frame_id
         ]
