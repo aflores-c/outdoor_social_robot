@@ -32,6 +32,14 @@ traffic_object_detector_node:
     # Discard LiDAR returns beyond this range (metres)
     max_range_m: 20.0
 
+    # ── "Vehicle stopped" signal ────────────────────────────────────────
+    # Single-target continuity heuristic (closest vehicle per frame, not
+    # full multi-object tracking) — consumed by school_traffic_control's
+    # VEHICLE_STOP -> CHECK_PLATE transition.
+    stopped_confirm_time_s:         1.5
+    stopped_distance_epsilon_m:     0.3
+    stopped_association_distance_m: 2.0
+
     # ── TF frame for published poses and markers ──────────────────────────
     lidar_frame: "velodyne"
 
@@ -48,6 +56,7 @@ traffic_object_detector_node:
     vehicles_topic:    "/perception/vehicles"
 
     # ── Perception load switching ───────────────────────────────────────
-    # On by default — school_traffic_control turns this off (and
-    # vehicle_plate_detection on) while VEHICLE_STOP needs a plate read.
+    # On by default — stays on through VEHICLE_STOP too (needed for the
+    # "vehicle stopped" signal above). school_traffic_control only turns
+    # this off (and vehicle_plate_detection on) during CHECK_PLATE.
     enabled_topic: "/perception/traffic_object_detection_enabled"

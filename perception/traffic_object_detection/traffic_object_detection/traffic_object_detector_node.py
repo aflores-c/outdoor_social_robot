@@ -18,6 +18,12 @@ Pipeline per frame:
   3. LiDAR points that fall inside each bounding box are extracted
   4. Median centroid of those points = object pose (x, y, z) in velodyne frame
   5. Detections are split by class into pedestrian / vehicle buckets
+  6. The closest vehicle's distance is tracked over a rolling window
+     (single-target continuity heuristic, not full tracking — see
+     _update_stopped_tracking) and flagged VehicleDetection.stopped once
+     it's held steady for stopped_confirm_time_s. Consumed by
+     school_traffic_control to decide when to check a stopped vehicle's
+     plate instead of just holding position indefinitely.
 
 The camera → LiDAR transform is read from the TF tree on every frame rather than
 loaded once from a calibration YAML, so this stays correct if the camera is on a
@@ -40,6 +46,8 @@ Published topics:
 """
 
 import threading
+import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -98,6 +106,16 @@ class TrafficObjectDetectorNode(Node):
         self.declare_parameter('pedestrian_min_lidar_points', 5)
         self.declare_parameter('vehicle_min_lidar_points',    10)
         self.declare_parameter('bicycle_min_lidar_points',    7)
+        # "Vehicle stopped" signal: single-target continuity heuristic (the
+        # closest vehicle each frame, no full multi-object tracking) — the
+        # closest vehicle's distance is tracked over a rolling window and
+        # flagged stopped once it's stayed within stopped_distance_epsilon_m
+        # for stopped_confirm_time_s. stopped_association_distance_m bounds
+        # how far the closest distance can jump frame-to-frame before it's
+        # treated as a different vehicle (history resets).
+        self.declare_parameter('stopped_confirm_time_s',        1.5)
+        self.declare_parameter('stopped_distance_epsilon_m',    0.3)
+        self.declare_parameter('stopped_association_distance_m', 2.0)
         self.declare_parameter('sync_slop_s',       0.10)
         self.declare_parameter('lidar_frame',       'velodyne')
         self.declare_parameter('max_range_m',       20.0)
@@ -126,6 +144,9 @@ class TrafficObjectDetectorNode(Node):
         self._min_pts_ped       = int(self.get_parameter('pedestrian_min_lidar_points').value)
         self._min_pts_veh       = int(self.get_parameter('vehicle_min_lidar_points').value)
         self._min_pts_bike      = int(self.get_parameter('bicycle_min_lidar_points').value)
+        self._stopped_confirm_time        = float(self.get_parameter('stopped_confirm_time_s').value)
+        self._stopped_distance_epsilon    = float(self.get_parameter('stopped_distance_epsilon_m').value)
+        self._stopped_association_distance = float(self.get_parameter('stopped_association_distance_m').value)
         self._lidar_frame       = self.get_parameter('lidar_frame').value
         self._max_range         = float(self.get_parameter('max_range_m').value)
         self._ground_z          = -(float(self.get_parameter('ground_height_m').value)
@@ -152,6 +173,11 @@ class TrafficObjectDetectorNode(Node):
         # ── Misc ──────────────────────────────────────────────────────────────
         self._bridge = CvBridge()
         self._lock   = threading.Lock()
+
+        # ── "Vehicle stopped" tracking state ─────────────────────────────────
+        self._stopped_history = deque()   # (t_monotonic, distance) — closest vehicle only
+        self._stopped_last_distance = None
+        self._closest_vehicle_stopped = False
 
         # ── Enable/disable switch (driven by school_traffic_control) ────────
         # Defaults on: this model runs unless explicitly told to stand down
@@ -456,6 +482,7 @@ class TrafficObjectDetectorNode(Node):
 
         self._publish_poses(self._pub_veh_poses, poses_veh, stamp)
         self._publish_markers(self._pub_veh_markers, poses_veh, stamp, 'vehicle', (1.0, 0.55, 0.0), Marker.CUBE, (2.0, 1.0, 0.8))
+        self._update_stopped_tracking(poses_veh)
         self._publish_vehicles(poses_veh, stamp)
 
         # Throttle debug image to save network bandwidth (Jetson → PC)
@@ -536,15 +563,66 @@ class TrafficObjectDetectorNode(Node):
             msg.pedestrians.append(d)
         self._pub_pedestrians.publish(msg)
 
+    def _update_stopped_tracking(self, poses_veh):
+        """Single-target continuity heuristic: track the closest vehicle's
+        distance over a rolling window and flag it stopped once that
+        distance has stayed within stopped_distance_epsilon_m for
+        stopped_confirm_time_s. Only the closest vehicle each frame is
+        tracked (no full multi-object tracking), matching
+        school_traffic_control's single-vehicle-at-a-time crossing model."""
+        now = time.monotonic()
+
+        if not poses_veh:
+            self._stopped_history.clear()
+            self._stopped_last_distance = None
+            self._closest_vehicle_stopped = False
+            return
+
+        closest = min(float(np.sqrt(x**2 + y**2)) for x, y, z, _ in poses_veh)
+
+        if (self._stopped_last_distance is None
+                or abs(closest - self._stopped_last_distance) > self._stopped_association_distance):
+            # First sighting, or the closest distance jumped too far to
+            # still be the same vehicle — restart history.
+            self._stopped_history.clear()
+        self._stopped_last_distance = closest
+
+        self._stopped_history.append((now, closest))
+        # Bound memory generously beyond the confirm window; the "stopped"
+        # decision below only looks at entries within stopped_confirm_time_s,
+        # not this whole buffer.
+        max_age = self._stopped_confirm_time * 3.0
+        while self._stopped_history and (now - self._stopped_history[0][0]) > max_age:
+            self._stopped_history.popleft()
+
+        window = [(t, d) for t, d in self._stopped_history if (now - t) <= self._stopped_confirm_time]
+        if not window:
+            self._closest_vehicle_stopped = False
+            return
+        covers_window = (now - window[0][0]) >= self._stopped_confirm_time * 0.9
+        window_dists = [d for _, d in window]
+        stable = (max(window_dists) - min(window_dists)) <= self._stopped_distance_epsilon
+        self._closest_vehicle_stopped = bool(covers_window and stable)
+
     def _publish_vehicles(self, poses_3d, stamp):
         msg = VehicleDetectionArray()
         msg.header.stamp    = stamp
         msg.header.frame_id = self._lidar_frame
-        for x, y, z, _ in poses_3d:
+
+        closest_idx = None
+        if poses_3d:
+            dists = [float(np.sqrt(x**2 + y**2)) for x, y, z, _ in poses_3d]
+            closest_idx = int(np.argmin(dists))
+
+        for i, (x, y, z, _) in enumerate(poses_3d):
             d = VehicleDetection()
             d.id = -1  # no persistent tracking
             d.distance = float(np.sqrt(x**2 + y**2))
             d.position = Point(x=float(x), y=float(y), z=float(z))
+            # Only the closest vehicle is tracked for "stopped" (see
+            # _update_stopped_tracking) — others in frame simultaneously
+            # always read False.
+            d.stopped = bool(i == closest_idx and self._closest_vehicle_stopped)
             msg.vehicles.append(d)
         self._pub_vehicles.publish(msg)
 

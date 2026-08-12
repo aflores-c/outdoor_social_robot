@@ -30,5 +30,5 @@ plate_detector_node:
 
     # ── Perception load switching ───────────────────────────────────────
     # Off by default — school_traffic_control turns this on (and
-    # traffic_object_detection off) while waiting on a plate read.
+    # traffic_object_detection off) only during CHECK_PLATE.
     enabled_topic: "/perception/plate_detection_enabled"

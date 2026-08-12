@@ -3,37 +3,67 @@
 School traffic control decision node.
 
 Acts as a crossing-guard state machine: the robot base holds a "middle of
-the road" pose while no vehicle needs attention. When a vehicle is detected
-within a configurable range, the robot holds its position and makes a stop
-gesture with the arm. If the vehicle's plate is confirmed as registered
-(and, optionally, no pedestrian is in the crossing zone), the robot moves
-to a "pass" pose while simultaneously making a pass gesture, letting the
-vehicle through. Once the vehicle has left the range, the robot immediately
-returns to the middle pose with the default gesture.
+the road" pose while no vehicle needs attention. When a vehicle enters the
+close range (range_near_m..range_far_m, default 3-5 m), the robot holds
+position and makes a stop gesture while watching for the vehicle to
+actually come to a stop (VehicleDetection.stopped, from
+traffic_object_detection). Once stopped, the robot looks down at the plate
+(head motion) and checks it; if confirmed registered within
+plate_confirmation_timeout_s, the robot crosses to pose B, waves the
+vehicle through, and returns. If not confirmed in time, the robot goes
+back to just holding the stop gesture until the vehicle leaves.
 
 A pedestrian within the alert range is handled separately from the state
 machine: the robot only speaks a warning through TTS and never changes its
 base pose or arm gesture because of a pedestrian — traffic control (the
 vehicle logic above) remains its only motion-driving task.
 
+Perception load switching: traffic_object_detection and
+vehicle_plate_detection are both heavy YOLO models the Jetson can't
+comfortably run at once (see _set_perception_mode). Traffic detection runs
+whenever this node needs to see the vehicle itself (MIDDLE_IDLE,
+VEHICLE_STOP, WAIT_TO_LEAVE, CROSS_VEHICLE, CHECK_VEHICLE_IN_RANGE,
+RETURNING); plate detection only runs during CHECK_PLATE.
+
 Inputs:
   <vehicles_topic>       traffic_perception_msgs/VehicleDetectionArray
   <pedestrians_topic>    traffic_perception_msgs/PedestrianDetectionArray
-  <plate_allowed_topic>  std_msgs/Bool  (True = plate is registered/allowed)
+  <plate_allowed_topic>  std_msgs/Bool  (True = plate is registered/allowed;
+                          noise-filtered via a sliding-window vote, see
+                          _plate_ok — a single stray misread doesn't flip
+                          the decision either way)
 
 Outputs (action clients):
   <go_to_xy_phi_action>   base_navigation/action/GoToXYPhi      (base motion)
-  <play_motion2_action>   play_motion2_msgs/action/PlayMotion2  (arm gesture)
+  <play_motion2_action>   play_motion2_msgs/action/PlayMotion2  (arm + head gesture)
   <tts_action>             tts_msgs/action/TTS                  (voice announcements)
 
 State machine (vehicles only):
-  MIDDLE_IDLE   -> base at pose A, default arm gesture. Waiting for a vehicle.
-  VEHICLE_STOP  -> base stays at pose A, stop gesture. Waiting for plate OK.
-  VEHICLE_PASS  -> base moves to pose B + pass gesture, sent together.
-  RETURNING     -> base moves back to pose A + default gesture, sent together.
-                   Once both actions complete, state returns to MIDDLE_IDLE.
+  MIDDLE_IDLE             -> base at pose A, default arm gesture. Waiting for a
+                             vehicle in the close range.
+  VEHICLE_STOP            -> base stays at pose A, stop gesture. Traffic detection
+                             stays on here (need VehicleDetection.stopped) —
+                             waiting for the vehicle to actually come to a stop.
+                             -> MIDDLE_IDLE if it leaves the range first.
+  CHECK_PLATE             -> head motion looks down at the plate; plate detection
+                             on, traffic detection off. plate_confirmation_timeout_s
+                             timer running.
+                             -> CROSS_VEHICLE if the plate is confirmed in time.
+                             -> WAIT_TO_LEAVE if the timer expires first.
+  WAIT_TO_LEAVE            -> same pose/gesture as VEHICLE_STOP (holding position);
+                             plate detection off, traffic detection back on.
+                             -> MIDDLE_IDLE once the vehicle leaves the range.
+  CROSS_VEHICLE            -> base moves to pose B + pass gesture, sent together.
+                             -> CHECK_VEHICLE_IN_RANGE once the base arrives at pose B.
+  CHECK_VEHICLE_IN_RANGE   -> pass gesture, then waves in a loop while the vehicle
+                             is still in range.
+                             -> RETURNING once it leaves.
+  RETURNING                -> base moves back to pose A + default gesture, sent
+                             together. Once both complete, state returns to
+                             MIDDLE_IDLE.
 """
 
+from collections import deque
 from enum import Enum, auto
 
 import rclpy
@@ -54,7 +84,10 @@ from tts_msgs.action import TTS
 class State(Enum):
     MIDDLE_IDLE = auto()
     VEHICLE_STOP = auto()
-    VEHICLE_PASS = auto()
+    CHECK_PLATE = auto()
+    WAIT_TO_LEAVE = auto()
+    CROSS_VEHICLE = auto()
+    CHECK_VEHICLE_IN_RANGE = auto()
     RETURNING = auto()
 
 
@@ -75,8 +108,9 @@ class SchoolTrafficControlNode(Node):
         # Perception load switching: traffic_object_detection and
         # vehicle_plate_detection are both heavy YOLO models the Jetson
         # can't comfortably run at once, so only one runs at a time —
-        # traffic detection by default, switched to plate detection while
-        # VEHICLE_STOP is waiting on a plate read, then switched back.
+        # traffic detection by default (including VEHICLE_STOP, which needs
+        # it to know when the vehicle actually stops), switched to plate
+        # detection only during CHECK_PLATE, then switched back.
         self.declare_parameter('traffic_detection_enabled_topic', '/perception/traffic_object_detection_enabled')
         self.declare_parameter('plate_detection_enabled_topic', '/perception/plate_detection_enabled')
 
@@ -96,17 +130,21 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('motion_stop', 'stop_gesture')
         self.declare_parameter('motion_pass', 'pass_gesture')
 
-        # Vehicle is "in range" for the crossing decision between these two
-        # distances [m] (near, far) — e.g. 2 m to 15 m from the robot.
-        self.declare_parameter('range_near_m', 2.0)
-        self.declare_parameter('range_far_m', 15.0)
+        # Vehicle is "in range" (close range) for the whole crossing
+        # interaction between these two distances [m] (near, far).
+        self.declare_parameter('range_near_m', 3.0)
+        self.declare_parameter('range_far_m', 5.0)
 
-        # VEHICLE_STOP fallback: traffic_object_detection is paused while
-        # here (vehicle_plate_detection has the GPU instead), so
-        # /perception/vehicles goes stale and can no longer tell us the
-        # vehicle drove off. If no plate gets confirmed within this long,
-        # give up and return to idle anyway rather than waiting forever.
-        self.declare_parameter('vehicle_stop_timeout_s', 20.0)
+        # CHECK_PLATE: give up waiting for a registered-plate confirmation
+        # after this long and fall back to WAIT_TO_LEAVE instead.
+        self.declare_parameter('plate_confirmation_timeout_s', 15.0)
+
+        # Plate noise filtering: plate_allowed is noise-filtered over a
+        # sliding window rather than trusting the single latest reading — a
+        # plate counts as confirmed once at least plate_vote_min_yes of the
+        # last plate_vote_window readings were True. See _plate_ok.
+        self.declare_parameter('plate_vote_window', 5)
+        self.declare_parameter('plate_vote_min_yes', 2)
 
         # Optional safety gate: if true, a pedestrian within pedestrian_zone_m
         # blocks the pass decision even if the plate is allowed. Defaults to
@@ -160,12 +198,15 @@ class SchoolTrafficControlNode(Node):
         self._motion_init_pass = "norway_init_pass"
         self._motion_pass_wave = "norway_pass_wave"
         self._motion_pass_init = "norway_pass_init"
+        self._motion_check_plate = "norway_check_plate"
 
 
         self._range_near = float(self.get_parameter('range_near_m').value)
         self._range_far = float(self.get_parameter('range_far_m').value)
-        self._vehicle_stop_timeout = Duration(
-            seconds=float(self.get_parameter('vehicle_stop_timeout_s').value))
+        self._plate_confirmation_timeout = Duration(
+            seconds=float(self.get_parameter('plate_confirmation_timeout_s').value))
+        self._plate_vote_min_yes = int(self.get_parameter('plate_vote_min_yes').value)
+        plate_vote_window = int(self.get_parameter('plate_vote_window').value)
 
         self._pedestrian_safety_gate = bool(self.get_parameter('pedestrian_safety_gate').value)
         self._pedestrian_zone_m = float(self.get_parameter('pedestrian_zone_m').value)
@@ -188,6 +229,10 @@ class SchoolTrafficControlNode(Node):
         self._pedestrians_stamp = None
         self._plate_allowed = False
         self._plate_stamp = None
+        # Sliding-window vote of recent plate_allowed readings — see
+        # _plate_ok. Cleared on every CHECK_PLATE entry so a previous
+        # vehicle's votes can't leak into the next one's decision.
+        self._plate_votes = deque(maxlen=plate_vote_window)
 
         self.create_subscription(VehicleDetectionArray, vehicles_topic, self._vehicles_cb, 10)
         self.create_subscription(PedestrianDetectionArray, pedestrians_topic, self._pedestrians_cb, 10)
@@ -235,13 +280,13 @@ class SchoolTrafficControlNode(Node):
         self._nav_pending = None
         self._motion_pending = None
 
-        # Used only while in VEHICLE_PASS, to sequence the stop-init motion
-        # before the pass gesture instead of sending both at once.
+        # Used only while in CHECK_VEHICLE_IN_RANGE, to sequence the pass
+        # gesture before waving instead of sending both at once.
         self._pass_gesture_sent = False
 
-        # Set on entering VEHICLE_STOP; used for the vehicle_stop_timeout_s
-        # fallback since /perception/vehicles goes stale in that state.
-        self._vehicle_stop_entered_at = None
+        # Set on entering CHECK_PLATE; used for the plate_confirmation_timeout_s
+        # fallback to WAIT_TO_LEAVE.
+        self._check_plate_entered_at = None
 
         # Pedestrian alert bookkeeping (independent of the state machine).
         self._say_in_flight = False
@@ -269,6 +314,7 @@ class SchoolTrafficControlNode(Node):
     def _plate_cb(self, msg: Bool):
         self._plate_allowed = msg.data
         self._plate_stamp = self.get_clock().now()
+        self._plate_votes.append(bool(msg.data))
 
     # ── Perception load switching ────────────────────────────────────────
 
@@ -302,7 +348,13 @@ class SchoolTrafficControlNode(Node):
         return any(p.distance <= self._pedestrian_zone_m for p in self._pedestrians)
 
     def _plate_ok(self) -> bool:
-        return self._plate_allowed and self._is_fresh(self._plate_stamp)
+        """True once at least plate_vote_min_yes of the last
+        plate_vote_window plate_allowed readings were True — smooths over
+        single-frame OCR noise (e.g. one stray False among mostly-True
+        readings) instead of trusting only the single latest message."""
+        if not self._is_fresh(self._plate_stamp):
+            return False
+        return sum(self._plate_votes) >= self._plate_vote_min_yes
 
     def _pedestrian_in_alert_range(self) -> bool:
         if self._pedestrians is None or not self._is_fresh(self._pedestrians_stamp):
@@ -321,32 +373,36 @@ class SchoolTrafficControlNode(Node):
                 self._enter_vehicle_stop()
 
         elif self._state == State.VEHICLE_STOP:
-            if self._plate_ok() and not self._pedestrian_blocking():
-                self._enter_vehicle_pass()
-            elif target_vehicle is None and self._is_fresh(self._vehicles_stamp):
-                # Vehicle left the range without being cleared to pass —
-                # only trust this from a genuinely fresh reading.
-                # traffic_object_detection is paused for the whole time
-                # we're in this state (vehicle_plate_detection has the GPU
-                # instead), so /perception/vehicles is normally stale here;
-                # a stale "None" must NOT be read as "vehicle left", or
-                # we'd bounce straight back to MIDDLE_IDLE on the very next
-                # tick, before plate detection ever got a chance to run.
+            # Traffic detection stays on for this whole state (unlike
+            # CHECK_PLATE), so target_vehicle is always live here — no
+            # staleness caveat needed.
+            if target_vehicle is None:
                 self._enter_idle()
-            elif (self.get_clock().now() - self._vehicle_stop_entered_at) > self._vehicle_stop_timeout:
-                # Fallback for the normal case above (vehicle detection
-                # paused, so we can't see it leave): give up after
-                # vehicle_stop_timeout_s with no plate confirmed.
+            elif target_vehicle.stopped:
+                self._enter_check_plate()
+
+        elif self._state == State.CHECK_PLATE:
+            if self._plate_ok():
+                self._enter_cross_vehicle()
+            elif (self.get_clock().now() - self._check_plate_entered_at) > self._plate_confirmation_timeout:
+                self._enter_wait_to_leave()
+
+        elif self._state == State.WAIT_TO_LEAVE:
+            if target_vehicle is None:
                 self._enter_idle()
 
-        elif self._state == State.VEHICLE_PASS:
+        elif self._state == State.CROSS_VEHICLE:
+            if self._nav_done:
+                self._enter_check_vehicle_in_range()
+
+        elif self._state == State.CHECK_VEHICLE_IN_RANGE:
             if target_vehicle is None:
                 # Vehicle has passed through — head back immediately.
                 self._enter_returning()
             elif not self._motion_done:
-                # Still finishing the previous motion (stop-init, the pass
-                # gesture, or a wave cycle) — wait for it before sending
-                # the next one instead of piling goals on top of it.
+                # Still finishing the previous motion (the pass gesture or
+                # a wave cycle) — wait for it before sending the next one
+                # instead of piling goals on top of it.
                 pass
             elif not self._pass_gesture_sent:
                 self._pass_gesture_sent = True
@@ -356,7 +412,6 @@ class SchoolTrafficControlNode(Node):
                 # new wave once the previous one has finished, not on
                 # every 10 Hz tick.
                 self._passing_vehicle()
-
 
         elif self._state == State.RETURNING:
             if self._nav_done and self._motion_done:
@@ -376,20 +431,37 @@ class SchoolTrafficControlNode(Node):
 
     def _enter_vehicle_stop(self):
         self._state = State.VEHICLE_STOP
-        self._vehicle_stop_entered_at = self.get_clock().now()
-        self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture)')
-        self._set_perception_mode(traffic_enabled=False, plate_enabled=True)
+        self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture, watching for it to stop)')
+        self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_motion(self._motion_init_stop)
         self._send_say(self._vehicle_stop_message)
 
-    def _enter_vehicle_pass(self):
-        self._state = State.VEHICLE_PASS
+    def _enter_check_plate(self):
+        self._state = State.CHECK_PLATE
+        self._check_plate_entered_at = self.get_clock().now()
+        self._plate_votes.clear()
+        self.get_logger().info('Vehicle stopped — state=CHECK_PLATE (head down, checking plate)')
+        self._set_perception_mode(traffic_enabled=False, plate_enabled=True)
+        self._send_motion(self._motion_check_plate)
+
+    def _enter_wait_to_leave(self):
+        self._state = State.WAIT_TO_LEAVE
+        self.get_logger().info('Plate not confirmed in time — state=WAIT_TO_LEAVE (stop gesture, waiting for vehicle to leave)')
+        self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
+        self._send_motion(self._motion_init_stop)
+
+    def _enter_cross_vehicle(self):
+        self._state = State.CROSS_VEHICLE
         self._pass_gesture_sent = False
-        self.get_logger().info('Plate allowed — state=VEHICLE_PASS (move to pose B, stop-init motion, then pass gesture)')
+        self.get_logger().info('Plate allowed — state=CROSS_VEHICLE (move to pose B, stop-init motion)')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_nav_goal(self._pose_b)
         self._send_motion(self._motion_stop_init)
         self._send_say(self._vehicle_pass_message)
+
+    def _enter_check_vehicle_in_range(self):
+        self._state = State.CHECK_VEHICLE_IN_RANGE
+        self.get_logger().info('At pose B — state=CHECK_VEHICLE_IN_RANGE (pass gesture, then waving)')
 
     def _enter_returning(self):
         self._state = State.RETURNING
@@ -404,7 +476,7 @@ class SchoolTrafficControlNode(Node):
         self._send_motion(self._motion_stop_init)
 
     def _passing_vehicle(self):
-        self.get_logger().info('Plate allowed — state=VEHICLE_PASS (waving)')
+        self.get_logger().info('Plate allowed — state=CHECK_VEHICLE_IN_RANGE (waving)')
         self._send_motion(self._motion_pass_wave)
 
 

@@ -15,11 +15,16 @@ Pipeline per frame:
   2. Each box is cropped and OCR'd (EasyOCR) to read the plate text
   3. The recognized text is normalized (uppercase, alphanumeric only) and
      checked against the `registered_plates` parameter (the school's
-     allow-list)
+     allow-list) via a bidirectional substring match, not exact equality —
+     OCR often reads a few extra noise characters around the real plate
+     (registered plate is a substring of the OCR text) or drops one (OCR
+     text is a substring of the registered plate); see _matches_registered
   4. True is published as soon as any visible plate matches the allow-list;
      False otherwise (including when no plate is visible at all) — this
      fails closed, so school_traffic_control never lets a vehicle pass
-     without a confirmed registered plate
+     without a confirmed registered plate. school_traffic_control also
+     applies its own sliding-window vote on top of this stream, so a
+     single noisy frame here doesn't flip the crossing decision either.
 
 Note: this node does not disambiguate between multiple vehicles/plates
 simultaneously in frame — it publishes True if ANY visible plate is
@@ -55,6 +60,16 @@ def normalize_plate(text: str) -> str:
     return _PLATE_CHARS_RE.sub('', text.upper())
 
 
+def plate_matches(plate_text: str, registered: set) -> bool:
+    """Bidirectional substring match against the allow-list: OCR often
+    reads a few extra noise characters around the real plate (e.g. a
+    7-character read where the actual plate is 6 characters) — in that
+    case the registered plate is a substring of plate_text. OCR can also
+    drop a character, making plate_text a substring of the registered
+    plate instead. Either direction counts as a match."""
+    return any(reg in plate_text or plate_text in reg for reg in registered)
+
+
 class PlateDetectorNode(Node):
 
     def __init__(self):
@@ -84,7 +99,7 @@ class PlateDetectorNode(Node):
         self.declare_parameter('debug_fps', 5.0)
 
         # Off by default; school_traffic_control turns this on (and
-        # traffic_object_detection off) while it's in VEHICLE_STOP, since
+        # traffic_object_detection off) only during CHECK_PLATE, since
         # running both heavy models at once is too much for one Jetson.
         self.declare_parameter('enabled_topic', '/perception/plate_detection_enabled')
 
@@ -123,7 +138,7 @@ class PlateDetectorNode(Node):
 
         # ── Enable/disable switch (driven by school_traffic_control) ────────
         # Defaults off: this model only runs once the state machine actually
-        # needs a plate read (VEHICLE_STOP), so traffic_object_detection can
+        # needs a plate read (CHECK_PLATE), so traffic_object_detection can
         # have the GPU the rest of the time.
         self._enabled = False
         enabled_qos = QoSProfile(
@@ -221,7 +236,7 @@ class PlateDetectorNode(Node):
                         plate_conf = conf
 
                 is_registered = bool(plate_text) and plate_conf >= self._ocr_min_conf \
-                    and plate_text in self._registered
+                    and plate_matches(plate_text, self._registered)
                 if plate_text:
                     last_plate = plate_text
                 if is_registered:
