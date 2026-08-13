@@ -198,11 +198,13 @@ class SchoolTrafficControlNode(Node):
         self._motion_default = "norway_init"
         self._motion_arms_init = "norway_arms_init"
         self._motion_stop = "norway_stop"
+        self._motion_right_init = "norway_right_init"
         self._motion_pass = "norway_pass"
         self._motion_pass_wave = "norway_pass_wave"
         self._motion_head_down = "norway_head_down"
         self._motion_head_up = "norway_head_up"
         self._motion_head_left = "norway_head_left"
+        self._motion_head_front = "norway_head_front"
 
 
         self._range_near = float(self.get_parameter('range_near_m').value)
@@ -500,6 +502,7 @@ class SchoolTrafficControlNode(Node):
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_nav_goal(self._pose_b)
         self._send_motion(self._motion_head_left)
+        self._send_motion(self._motion_right_init)
         self._send_say(self._vehicle_pass_message)
 
     def _enter_check_vehicle_in_range(self):
@@ -510,6 +513,7 @@ class SchoolTrafficControlNode(Node):
         self._state = State.RETURNING
         self.get_logger().info('Vehicle passed — state=RETURNING (move to pose A + default gesture)')
         self._send_nav_goal(self._pose_a)
+        self._send_motion(self._motion_head_front)
         self._send_motion(self._motion_arms_init)
 
     def _enter_idle(self):
