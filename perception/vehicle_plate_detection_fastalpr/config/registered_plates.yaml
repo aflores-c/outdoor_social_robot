@@ -12,3 +12,4 @@ plate_detector_fastalpr_node:
     registered_plates:
       - "ABC-123"
       - "XYZ 789"
+      - "BV 6666"
