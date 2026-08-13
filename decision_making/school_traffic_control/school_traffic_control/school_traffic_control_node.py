@@ -375,6 +375,7 @@ class SchoolTrafficControlNode(Node):
     # ── Control loop / state machine ────────────────────────────────────
 
     def _tick(self):
+        self._maybe_retry_pending_goals()
         self._maybe_alert_pedestrian()
 
         target_vehicle = self._closest_vehicle_in_range()
@@ -447,6 +448,16 @@ class SchoolTrafficControlNode(Node):
             if self._nav_done and self._motion_done:
                 self._state = State.MIDDLE_IDLE
                 self.get_logger().info('Back at middle pose — state=MIDDLE_IDLE')
+
+    def _maybe_retry_pending_goals(self):
+        # Only handles the "action server wasn't discovered yet" case: here
+        # _*_done is still True since no goal ever actually went in flight.
+        # The busy-goal case (_*_done False) already retries on its own via
+        # _nav_result_cb/_motion_result_cb once the current goal finishes.
+        if self._nav_pending is not None and self._nav_done:
+            self._maybe_dispatch_pending_nav_goal()
+        if self._motion_pending is not None and self._motion_done:
+            self._maybe_dispatch_pending_motion()
 
     def _maybe_alert_pedestrian(self):
         """Speak a warning when a pedestrian is close. Never touches motion."""
@@ -534,6 +545,16 @@ class SchoolTrafficControlNode(Node):
         self._dispatch_nav_goal(pose, request_id)
 
     def _dispatch_nav_goal(self, pose, request_id):
+        if not self._nav_client.wait_for_server(timeout_sec=0.0):
+            # Not discovered yet (e.g. right at startup, before cross-machine
+            # DDS discovery has caught up) — keep it queued and let _tick's
+            # _maybe_retry_pending_goals try again on the next cycle, rather
+            # than silently dropping this goal forever.
+            self.get_logger().warn('go_to_xy_phi action server not available, will retry',
+                                    throttle_duration_sec=2.0)
+            self._nav_pending = (request_id, pose)
+            return
+
         x, y, phi = pose
         goal = GoToXYPhi.Goal()
         goal.x = float(x)
@@ -541,11 +562,6 @@ class SchoolTrafficControlNode(Node):
         goal.phi = float(phi)
 
         self._nav_done = False
-
-        if not self._nav_client.wait_for_server(timeout_sec=0.0):
-            self.get_logger().warn('go_to_xy_phi action server not available')
-            self._nav_done = True
-            return
 
         future = self._nav_client.send_goal_async(goal)
         future.add_done_callback(
@@ -575,16 +591,19 @@ class SchoolTrafficControlNode(Node):
         self._dispatch_motion(motion_name, request_id)
 
     def _dispatch_motion(self, motion_name, request_id):
+        if not self._motion_client.wait_for_server(timeout_sec=0.0):
+            # Same reasoning as _dispatch_nav_goal: keep it queued and retry
+            # from _tick instead of dropping it.
+            self.get_logger().warn('play_motion2 action server not available, will retry',
+                                    throttle_duration_sec=2.0)
+            self._motion_pending = (request_id, motion_name)
+            return
+
         goal = PlayMotion2.Goal()
         goal.motion_name = motion_name
         goal.skip_planning = False
 
         self._motion_done = False
-
-        if not self._motion_client.wait_for_server(timeout_sec=0.0):
-            self.get_logger().warn('play_motion2 action server not available')
-            self._motion_done = True
-            return
 
         future = self._motion_client.send_goal_async(goal)
         future.add_done_callback(
