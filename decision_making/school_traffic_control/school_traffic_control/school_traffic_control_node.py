@@ -45,18 +45,21 @@ State machine (vehicles only):
                              stays on here (need VehicleDetection.stopped) —
                              waiting for the vehicle to actually come to a stop.
                              -> MIDDLE_IDLE if it leaves the range first.
-  CHECK_PLATE             -> head motion looks down at the plate; plate detection
-                             on, traffic detection off. plate_confirmation_timeout_s
-                             timer running.
+  CHECK_PLATE             -> head motion looks down at the plate first; only once
+                             that motion finishes does plate detection turn on and
+                             the plate_confirmation_timeout_s timer start.
                              -> CROSS_VEHICLE if the plate is confirmed in time.
                              -> WAIT_TO_LEAVE if the timer expires first.
-  WAIT_TO_LEAVE            -> same pose/gesture as VEHICLE_STOP (holding position);
-                             plate detection off, traffic detection back on.
+  WAIT_TO_LEAVE            -> head motion back up first; once that finishes, the
+                             stop gesture is sent and the vehicle-left check begins
+                             (traffic detection back on, plate detection off).
                              -> MIDDLE_IDLE once the vehicle leaves the range.
-  CROSS_VEHICLE            -> base moves to pose B + pass gesture, sent together.
-                             -> CHECK_VEHICLE_IN_RANGE once the base arrives at pose B.
-  CHECK_VEHICLE_IN_RANGE   -> pass gesture, then waves in a loop while the vehicle
-                             is still in range.
+  CROSS_VEHICLE            -> base moves to pose B while the head turns left; once
+                             the head motion finishes, the pass gesture plays.
+                             -> CHECK_VEHICLE_IN_RANGE once the base has arrived AND
+                             the head-left + pass sequence has both finished.
+  CHECK_VEHICLE_IN_RANGE   -> waves in a loop while the vehicle is still in range
+                             (the pass gesture already played during CROSS_VEHICLE).
                              -> RETURNING once it leaves.
   RETURNING                -> base moves back to pose A + default gesture, sent
                              together. Once both complete, state returns to
@@ -192,13 +195,14 @@ class SchoolTrafficControlNode(Node):
         #self._motion_default = self.get_parameter('motion_default').value
         #self._motion_stop = self.get_parameter('motion_stop').value
         #self._motion_pass = self.get_parameter('motion_pass').value
-        self._motion_default = "initial_pose"
-        self._motion_stop_init = "norway_stop_init"
-        self._motion_init_stop = "norway_init_stop"
-        self._motion_init_pass = "norway_init_pass"
+        self._motion_default = "norway_init"
+        self._motion_arms_init = "norway_arms_init"
+        self._motion_stop = "norway_stop"
+        self._motion_pass = "norway_pass"
         self._motion_pass_wave = "norway_pass_wave"
-        self._motion_pass_init = "norway_pass_init"
-        self._motion_check_plate = "norway_head_down"
+        self._motion_head_down = "norway_head_down"
+        self._motion_head_up = "norway_head_up"
+        self._motion_head_left = "norway_head_left"
 
 
         self._range_near = float(self.get_parameter('range_near_m').value)
@@ -280,11 +284,18 @@ class SchoolTrafficControlNode(Node):
         self._nav_pending = None
         self._motion_pending = None
 
-        # Used only while in CHECK_VEHICLE_IN_RANGE, to sequence the pass
-        # gesture before waving instead of sending both at once.
+        # Used only while in CROSS_VEHICLE, to sequence the pass gesture
+        # after the head-left motion finishes instead of sending both at
+        # once (a single in-flight motion goal can't be queued twice).
         self._pass_gesture_sent = False
 
-        # Set on entering CHECK_PLATE; used for the plate_confirmation_timeout_s
+        # Used only while in WAIT_TO_LEAVE, to sequence the stop gesture
+        # after the head-up motion finishes, same reasoning as above.
+        self._wait_to_leave_stop_sent = False
+
+        # Set once the CHECK_PLATE head-down motion finishes and plate
+        # checking actually starts; used both as a "have we started
+        # checking yet" gate and for the plate_confirmation_timeout_s
         # fallback to WAIT_TO_LEAVE.
         self._check_plate_entered_at = None
 
@@ -382,17 +393,39 @@ class SchoolTrafficControlNode(Node):
                 self._enter_check_plate()
 
         elif self._state == State.CHECK_PLATE:
-            if self._plate_ok():
+            if self._check_plate_entered_at is None:
+                # Still turning the head down — don't start trusting plate
+                # readings (or the confirmation timeout) until it's done,
+                # since the camera isn't pointed at the plate yet.
+                if self._motion_done:
+                    self._check_plate_entered_at = self.get_clock().now()
+                    self._plate_votes.clear()
+                    self._set_perception_mode(traffic_enabled=False, plate_enabled=True)
+            elif self._plate_ok():
                 self._enter_cross_vehicle()
             elif (self.get_clock().now() - self._check_plate_entered_at) > self._plate_confirmation_timeout:
                 self._enter_wait_to_leave()
 
         elif self._state == State.WAIT_TO_LEAVE:
-            if target_vehicle is None:
-                self._enter_idle()
+            if not self._motion_done and not self._wait_to_leave_stop_sent:
+                # Still raising the head back up.
+                pass
+            else:
+                if not self._wait_to_leave_stop_sent:
+                    self._wait_to_leave_stop_sent = True
+                    self._send_motion(self._motion_stop)
+                if target_vehicle is None:
+                    self._enter_idle()
 
         elif self._state == State.CROSS_VEHICLE:
-            if self._nav_done:
+            if not self._motion_done:
+                # Still turning the head left or playing the pass gesture —
+                # wait for each to finish before moving to the next step.
+                pass
+            elif not self._pass_gesture_sent:
+                self._pass_gesture_sent = True
+                self._send_motion(self._motion_pass)
+            elif self._nav_done:
                 self._enter_check_vehicle_in_range()
 
         elif self._state == State.CHECK_VEHICLE_IN_RANGE:
@@ -400,13 +433,10 @@ class SchoolTrafficControlNode(Node):
                 # Vehicle has passed through — head back immediately.
                 self._enter_returning()
             elif not self._motion_done:
-                # Still finishing the previous motion (the pass gesture or
-                # a wave cycle) — wait for it before sending the next one
-                # instead of piling goals on top of it.
+                # Still finishing the previous wave cycle — wait for it
+                # before sending the next one instead of piling goals on
+                # top of it.
                 pass
-            elif not self._pass_gesture_sent:
-                self._pass_gesture_sent = True
-                self._send_motion(self._motion_init_pass)
             else:
                 # Keep waving while the vehicle is in range: only send a
                 # new wave once the previous one has finished, not on
@@ -433,30 +463,32 @@ class SchoolTrafficControlNode(Node):
         self._state = State.VEHICLE_STOP
         self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture, watching for it to stop)')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
-        self._send_motion(self._motion_init_stop)
+        self._send_motion(self._motion_stop)
         self._send_say(self._vehicle_stop_message)
 
     def _enter_check_plate(self):
         self._state = State.CHECK_PLATE
-        self._check_plate_entered_at = self.get_clock().now()
-        self._plate_votes.clear()
+        # Left None until the head-down motion finishes — see _tick, which
+        # starts the actual plate checking (perception mode + votes +
+        # timeout timer) only once that happens.
+        self._check_plate_entered_at = None
         self.get_logger().info('Vehicle stopped — state=CHECK_PLATE (head down, checking plate)')
-        self._set_perception_mode(traffic_enabled=False, plate_enabled=True)
-        self._send_motion(self._motion_check_plate)
+        self._send_motion(self._motion_head_down)
 
     def _enter_wait_to_leave(self):
         self._state = State.WAIT_TO_LEAVE
-        self.get_logger().info('Plate not confirmed in time — state=WAIT_TO_LEAVE (stop gesture, waiting for vehicle to leave)')
+        self._wait_to_leave_stop_sent = False
+        self.get_logger().info('Plate not confirmed in time — state=WAIT_TO_LEAVE (head up, then stop gesture, waiting for vehicle to leave)')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
-        self._send_motion(self._motion_init_stop)
+        self._send_motion(self._motion_head_up)
 
     def _enter_cross_vehicle(self):
         self._state = State.CROSS_VEHICLE
         self._pass_gesture_sent = False
-        self.get_logger().info('Plate allowed — state=CROSS_VEHICLE (move to pose B, stop-init motion)')
+        self.get_logger().info('Plate allowed — state=CROSS_VEHICLE (move to pose B, head left)')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_nav_goal(self._pose_b)
-        self._send_motion(self._motion_stop_init)
+        self._send_motion(self._motion_head_left)
         self._send_say(self._vehicle_pass_message)
 
     def _enter_check_vehicle_in_range(self):
@@ -467,13 +499,13 @@ class SchoolTrafficControlNode(Node):
         self._state = State.RETURNING
         self.get_logger().info('Vehicle passed — state=RETURNING (move to pose A + default gesture)')
         self._send_nav_goal(self._pose_a)
-        self._send_motion(self._motion_pass_init)
+        self._send_motion(self._motion_arms_init)
 
     def _enter_idle(self):
         self._state = State.MIDDLE_IDLE
         self.get_logger().info('Vehicle left range — state=MIDDLE_IDLE (default gesture)')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
-        self._send_motion(self._motion_stop_init)
+        self._send_motion(self._motion_arms_init)
 
     def _passing_vehicle(self):
         self.get_logger().info('Plate allowed — state=CHECK_VEHICLE_IN_RANGE (waving)')
