@@ -43,7 +43,7 @@ school_traffic_control_node:
     # close range [range_near_m, range_far_m] meters, for the whole
     # crossing interaction.
     range_near_m: 3.0
-    range_far_m: 5.0
+    range_far_m: 10.0
 
     # CHECK_PLATE: give up waiting for a registered-plate confirmation
     # after this long and fall back to WAIT_TO_LEAVE instead.
