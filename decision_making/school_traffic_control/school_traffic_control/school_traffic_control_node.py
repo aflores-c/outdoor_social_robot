@@ -138,6 +138,14 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('range_near_m', 3.0)
         self.declare_parameter('range_far_m', 5.0)
 
+        # Debounce for the vehicle actually leaving range: target_vehicle
+        # must read as absent continuously for this long before
+        # VEHICLE_STOP/WAIT_TO_LEAVE/CHECK_VEHICLE_IN_RANGE treat it as
+        # gone — smooths over a single dropped/late detection frame (e.g.
+        # right as a vehicle's stopped flag flips) instead of flickering
+        # back to MIDDLE_IDLE/RETURNING and immediately back again.
+        self.declare_parameter('vehicle_lost_confirm_s', 0.3)
+
         # CHECK_PLATE: give up waiting for a registered-plate confirmation
         # after this long and fall back to WAIT_TO_LEAVE instead.
         self.declare_parameter('plate_confirmation_timeout_s', 15.0)
@@ -197,7 +205,7 @@ class SchoolTrafficControlNode(Node):
         #self._motion_pass = self.get_parameter('motion_pass').value
         self._motion_default = "norway_init"
         self._motion_arms_init = "norway_arms_init"
-        self._motion_stop = "norway_stop"
+        self._motion_stop = "norway_init_stop"
         self._motion_right_init = "norway_right_init"
         self._motion_pass = "norway_pass"
         self._motion_pass_wave = "norway_pass_wave"
@@ -209,6 +217,8 @@ class SchoolTrafficControlNode(Node):
 
         self._range_near = float(self.get_parameter('range_near_m').value)
         self._range_far = float(self.get_parameter('range_far_m').value)
+        self._vehicle_lost_confirm = Duration(
+            seconds=float(self.get_parameter('vehicle_lost_confirm_s').value))
         self._plate_confirmation_timeout = Duration(
             seconds=float(self.get_parameter('plate_confirmation_timeout_s').value))
         self._plate_vote_min_yes = int(self.get_parameter('plate_vote_min_yes').value)
@@ -301,6 +311,14 @@ class SchoolTrafficControlNode(Node):
         # fallback to WAIT_TO_LEAVE.
         self._check_plate_entered_at = None
 
+        # Timestamp of when target_vehicle first read as absent, used by
+        # _vehicle_confirmed_gone to debounce a single dropped detection
+        # frame before actually treating the vehicle as gone. Reset to
+        # None whenever target_vehicle is seen present again, and on entry
+        # to each state that checks it (_enter_vehicle_stop,
+        # _enter_wait_to_leave, _enter_check_vehicle_in_range).
+        self._vehicle_lost_since = None
+
         # Pedestrian alert bookkeeping (independent of the state machine).
         self._say_in_flight = False
         self._last_say_stamp = None
@@ -353,6 +371,20 @@ class SchoolTrafficControlNode(Node):
             return None
         return min(candidates, key=lambda v: v.distance)
 
+    def _vehicle_confirmed_gone(self, target_vehicle) -> bool:
+        """True once target_vehicle has read as absent continuously for at
+        least vehicle_lost_confirm_s — debounces a single dropped/late
+        detection frame (e.g. right as a vehicle's stopped flag flips) so
+        VEHICLE_STOP/WAIT_TO_LEAVE/CHECK_VEHICLE_IN_RANGE don't flicker
+        back to MIDDLE_IDLE/RETURNING and immediately re-enter."""
+        if target_vehicle is not None:
+            self._vehicle_lost_since = None
+            return False
+        if self._vehicle_lost_since is None:
+            self._vehicle_lost_since = self.get_clock().now()
+            return False
+        return (self.get_clock().now() - self._vehicle_lost_since) >= self._vehicle_lost_confirm
+
     def _pedestrian_blocking(self) -> bool:
         if not self._pedestrian_safety_gate:
             return False
@@ -389,10 +421,13 @@ class SchoolTrafficControlNode(Node):
         elif self._state == State.VEHICLE_STOP:
             # Traffic detection stays on for this whole state (unlike
             # CHECK_PLATE), so target_vehicle is always live here — no
-            # staleness caveat needed.
-            if target_vehicle is None:
+            # staleness caveat needed. _vehicle_confirmed_gone debounces a
+            # single dropped/late detection frame (common right as a
+            # vehicle's stopped flag flips) so it doesn't bounce back to
+            # MIDDLE_IDLE mid-interaction.
+            if self._vehicle_confirmed_gone(target_vehicle):
                 self._enter_idle()
-            elif target_vehicle.stopped:
+            elif target_vehicle is not None and target_vehicle.stopped:
                 self._enter_check_plate()
 
         elif self._state == State.CHECK_PLATE:
@@ -417,7 +452,7 @@ class SchoolTrafficControlNode(Node):
                 if not self._wait_to_leave_stop_sent:
                     self._wait_to_leave_stop_sent = True
                     self._send_motion(self._motion_stop)
-                if target_vehicle is None:
+                if self._vehicle_confirmed_gone(target_vehicle):
                     self._enter_idle()
 
         elif self._state == State.CROSS_VEHICLE:
@@ -432,7 +467,7 @@ class SchoolTrafficControlNode(Node):
                 self._enter_check_vehicle_in_range()
 
         elif self._state == State.CHECK_VEHICLE_IN_RANGE:
-            if target_vehicle is None:
+            if self._vehicle_confirmed_gone(target_vehicle):
                 # Vehicle has passed through — head back immediately.
                 self._enter_returning()
             elif not self._motion_done:
@@ -440,7 +475,7 @@ class SchoolTrafficControlNode(Node):
                 # before sending the next one instead of piling goals on
                 # top of it.
                 pass
-            else:
+            elif target_vehicle is not None:
                 # Keep waving while the vehicle is in range: only send a
                 # new wave once the previous one has finished, not on
                 # every 10 Hz tick.
@@ -474,6 +509,7 @@ class SchoolTrafficControlNode(Node):
 
     def _enter_vehicle_stop(self):
         self._state = State.VEHICLE_STOP
+        self._vehicle_lost_since = None
         self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture, watching for it to stop)')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_motion(self._motion_stop)
@@ -491,6 +527,7 @@ class SchoolTrafficControlNode(Node):
     def _enter_wait_to_leave(self):
         self._state = State.WAIT_TO_LEAVE
         self._wait_to_leave_stop_sent = False
+        self._vehicle_lost_since = None
         self.get_logger().info('Plate not confirmed in time — state=WAIT_TO_LEAVE (head up, then stop gesture, waiting for vehicle to leave)')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_motion(self._motion_head_up)
@@ -507,6 +544,7 @@ class SchoolTrafficControlNode(Node):
 
     def _enter_check_vehicle_in_range(self):
         self._state = State.CHECK_VEHICLE_IN_RANGE
+        self._vehicle_lost_since = None
         self.get_logger().info('At pose B — state=CHECK_VEHICLE_IN_RANGE (pass gesture, then waving)')
 
     def _enter_returning(self):
