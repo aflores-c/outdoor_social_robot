@@ -1,38 +1,23 @@
-from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import Node
 import os
+
 from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
-def generate_launch_description():
 
+def launch_setup(context, *args, **kwargs):
     pkg_dir = get_package_share_directory('base_navigation')
 
     # "diff_drive" (default) constrains MPPI to forward/backward + rotation,
     # matching the robot's actual differential-drive kinematics.
     # "omni" allows lateral (vy) motion in the sampled trajectories.
-    controller_profile = LaunchConfiguration('controller_profile')
+    controller_profile = LaunchConfiguration('controller_profile').perform(context)
+    controller_server_config = os.path.join(
+        pkg_dir, 'config', f'controller_server_{controller_profile}.yaml')
 
-    declare_controller_profile = DeclareLaunchArgument(
-        'controller_profile',
-        default_value='diff_drive',
-        choices=['diff_drive', 'omni'],
-        description='Controller server motion model profile to load '
-                     '(diff_drive: forward/backward only, default; '
-                     'omni: allows lateral motion)',
-    )
-
-    controller_server_config = PathJoinSubstitution([
-        pkg_dir,
-        'config',
-        ['controller_server_', controller_profile, '.yaml'],
-    ])
-
-    return LaunchDescription([
-
-        declare_controller_profile,
-
+    return [
         Node(
             package='nav2_planner',
             executable='planner_server',
@@ -76,4 +61,21 @@ def generate_launch_description():
             name='navigate_to_pose_server',
             output='screen',
         ),
+    ]
+
+
+def generate_launch_description():
+
+    declare_controller_profile = DeclareLaunchArgument(
+        'controller_profile',
+        default_value='diff_drive',
+        choices=['diff_drive', 'omni'],
+        description='Controller server motion model profile to load '
+                     '(diff_drive: forward/backward only, default; '
+                     'omni: allows lateral motion)',
+    )
+
+    return LaunchDescription([
+        declare_controller_profile,
+        OpaqueFunction(function=launch_setup),
     ])
