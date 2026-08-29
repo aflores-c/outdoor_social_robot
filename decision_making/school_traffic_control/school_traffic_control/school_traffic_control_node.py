@@ -14,9 +14,15 @@ vehicle through, and returns. If not confirmed in time, the robot goes
 back to just holding the stop gesture until the vehicle leaves.
 
 A pedestrian within the alert range is handled separately from the state
-machine: the robot only speaks a warning through TTS and never changes its
-base pose or arm gesture because of a pedestrian — traffic control (the
-vehicle logic above) remains its only motion-driving task.
+machine: the robot only plays an audio clip (robot_audio) and never changes
+its base pose or arm gesture because of a pedestrian — traffic control (the
+vehicle logic above) remains its only motion-driving task. In MIDDLE_IDLE it
+plays pedestrian_introduction_message; in any vehicle-focused state it plays
+the plain pedestrian_alert_message instead (see _maybe_alert_pedestrian).
+
+An EMERGENCY state, forced externally via emergency_topic, preempts every
+other state: it cancels in-flight nav/motion goals and holds (for teleop)
+until the flag clears, then always resumes at MIDDLE_IDLE.
 
 Perception load switching: traffic_object_detection and
 vehicle_plate_detection are both heavy YOLO models the Jetson can't
@@ -36,7 +42,7 @@ Inputs:
 Outputs (action clients):
   <go_to_xy_phi_action>   base_navigation/action/GoToXYPhi      (base motion)
   <play_motion2_action>   play_motion2_msgs/action/PlayMotion2  (arm + head gesture)
-  <tts_action>             tts_msgs/action/TTS                  (voice announcements)
+  <play_audio_action>     robot_audio_msgs/action/PlayAudio     (voice/audio clips)
 
 State machine (vehicles only):
   MIDDLE_IDLE             -> base at pose A, default arm gesture. Waiting for a
@@ -60,13 +66,24 @@ State machine (vehicles only):
                              the head-left + pass sequence has both finished.
   CHECK_VEHICLE_IN_RANGE   -> waves in a loop while the vehicle is still in range
                              (the pass gesture already played during CROSS_VEHICLE).
-                             -> RETURNING once it leaves.
-  RETURNING                -> base moves back to pose A + default gesture, sent
-                             together. Once both complete, state returns to
-                             MIDDLE_IDLE.
+                             Tracks the specific vehicle (by id) that was
+                             authorized at CROSS_VEHICLE entry, not just "any
+                             vehicle in range" — a second, not-yet-authorized
+                             car queued behind it doesn't block the return.
+                             -> RETURNING once that specific vehicle leaves.
+  RETURNING                -> base moves back to pose A, sent together with an
+                             arm gesture: default/arms_init if only one car was
+                             ever in range, or the stop gesture if a second
+                             (queued, unauthorized) car was also seen — so it
+                             doesn't think it's been waved through too. Once
+                             both complete, state returns to MIDDLE_IDLE.
+  EMERGENCY                -> reachable from any state via emergency_topic.
+                             Cancels in-flight nav/motion goals and holds for
+                             teleop; resumes at MIDDLE_IDLE once cleared.
 """
 
-from collections import deque
+import json
+from collections import Counter, deque
 from enum import Enum, auto
 
 import rclpy
@@ -76,12 +93,13 @@ from rclpy.time import Time
 from rclpy.duration import Duration
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 from traffic_perception_msgs.msg import VehicleDetectionArray, PedestrianDetectionArray
+from drone_traffic_perception.msg import VehicleDetectionCounts
 
 from base_navigation.action import GoToXYPhi
 from play_motion2_msgs.action import PlayMotion2
-from tts_msgs.action import TTS
+from robot_audio_msgs.action import PlayAudio
 
 
 class State(Enum):
@@ -92,6 +110,7 @@ class State(Enum):
     CROSS_VEHICLE = auto()
     CHECK_VEHICLE_IN_RANGE = auto()
     RETURNING = auto()
+    EMERGENCY = auto()
 
 
 class SchoolTrafficControlNode(Node):
@@ -103,10 +122,18 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('vehicles_topic', '/perception/vehicles')
         self.declare_parameter('pedestrians_topic', '/perception/pedestrians')
         self.declare_parameter('plate_allowed_topic', '/perception/plate_allowed')
+        self.declare_parameter('close_proximity_topic', '/perception/close_proximity')
+        self.declare_parameter('force_plate_allowed_topic', '/perception/force_plate_allowed')
+        self.declare_parameter('drone_vehicle_detections_topic', 'drone_vehicle_detections')
+        self.declare_parameter('emergency_topic', '/school_traffic_control/emergency')
+        # Field-trial event log (see benchmark_logging) — published
+        # unconditionally; benchmark_logging's data_logger_node is the only
+        # place that decides whether a trial is active and gates on that.
+        self.declare_parameter('benchmark_events_topic', '/benchmark/events')
 
         self.declare_parameter('go_to_xy_phi_action', 'go_to_xy_phi')
         self.declare_parameter('play_motion2_action', 'play_motion2')
-        self.declare_parameter('tts_action', '/tts_engine/tts')
+        self.declare_parameter('play_audio_action', 'play_audio')
 
         # Perception load switching: traffic_object_detection and
         # vehicle_plate_detection are both heavy YOLO models the Jetson
@@ -165,15 +192,36 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('pedestrian_safety_gate', False)
         self.declare_parameter('pedestrian_zone_m', 5.0)
 
-        # Pedestrian alert: within this range, warn verbally via TTS — no
-        # base or arm motion is triggered by this.
+        # Pedestrian alert: within this range, play an audio clip — no base
+        # or arm motion is triggered by this. In MIDDLE_IDLE,
+        # pedestrian_introduction_message plays instead of the plain alert
+        # (see _maybe_alert_pedestrian) — once a vehicle is being handled, we
+        # focus on vehicles and fall back to the plain caution clip.
         self.declare_parameter('pedestrian_alert_range_m', 5.0)
-        self.declare_parameter('pedestrian_alert_message', 'Caution, pedestrian, please stand clear.')
+        self.declare_parameter('pedestrian_alert_message', 'safe_audio.mp3')
+        self.declare_parameter('pedestrian_introduction_message', 'presentation_audio.mp3')
         self.declare_parameter('pedestrian_alert_cooldown_s', 5.0)
 
-        # Voice announcements on vehicle state transitions.
-        self.declare_parameter('vehicle_stop_message', 'Stop, please. Let the children cross.')
-        self.declare_parameter('vehicle_pass_message', 'You may proceed.')
+        # Audio clips on vehicle state transitions (robot_audio filenames).
+        self.declare_parameter('vehicle_stop_message', 'stop_audio.mp3')
+        self.declare_parameter('vehicle_pass_message', 'enter_audio.mp3')
+        # Played instead of vehicle_stop_message in WAIT_TO_LEAVE when a
+        # parking space is free outside the school (see _parking_space_free).
+        self.declare_parameter('vehicle_stop_goto_message', 'go_to_sfo_audio.mp3')
+
+        # VehicleDetectionCounts (drone_traffic_perception) mode-smoothing:
+        # raw_detections is buffered over the trailing parking_count_window_s
+        # and the statistical mode of that window is compared against
+        # parking_free_threshold — smooths a single noisy frame instead of
+        # trusting the drone node's own already-smoothed average/EMA fields.
+        self.declare_parameter('parking_free_threshold', 12)
+        self.declare_parameter('parking_count_window_s', 1.0)
+
+        # Drone link staleness: no heartbeat topic exists upstream, so this
+        # is inferred purely from gaps between VehicleDetectionCounts
+        # arrivals. Deliberately NOT message_timeout_s (1.0s) — the drone's
+        # own RTMP reconnect cycle is ~1s, which would flap this constantly.
+        self.declare_parameter('drone_link_timeout_s', 4.0)
 
         # Messages older than this are treated as stale/unknown.
         self.declare_parameter('message_timeout_s', 1.0)
@@ -182,12 +230,17 @@ class SchoolTrafficControlNode(Node):
         vehicles_topic = self.get_parameter('vehicles_topic').value
         pedestrians_topic = self.get_parameter('pedestrians_topic').value
         plate_allowed_topic = self.get_parameter('plate_allowed_topic').value
+        close_proximity_topic = self.get_parameter('close_proximity_topic').value
+        force_plate_allowed_topic = self.get_parameter('force_plate_allowed_topic').value
+        drone_vehicle_detections_topic = self.get_parameter('drone_vehicle_detections_topic').value
+        emergency_topic = self.get_parameter('emergency_topic').value
+        benchmark_events_topic = self.get_parameter('benchmark_events_topic').value
         traffic_detection_enabled_topic = self.get_parameter('traffic_detection_enabled_topic').value
         plate_detection_enabled_topic = self.get_parameter('plate_detection_enabled_topic').value
 
         go_to_xy_phi_action = self.get_parameter('go_to_xy_phi_action').value
         play_motion2_action = self.get_parameter('play_motion2_action').value
-        tts_action = self.get_parameter('tts_action').value
+        play_audio_action = self.get_parameter('play_audio_action').value
 
         self._pose_a = (
             self.get_parameter('pose_a_x').value,
@@ -229,11 +282,20 @@ class SchoolTrafficControlNode(Node):
 
         self._pedestrian_alert_range = float(self.get_parameter('pedestrian_alert_range_m').value)
         self._pedestrian_alert_message = self.get_parameter('pedestrian_alert_message').value
+        self._pedestrian_introduction_message = self.get_parameter('pedestrian_introduction_message').value
         self._pedestrian_alert_cooldown = Duration(
             seconds=float(self.get_parameter('pedestrian_alert_cooldown_s').value))
 
         self._vehicle_stop_message = self.get_parameter('vehicle_stop_message').value
         self._vehicle_pass_message = self.get_parameter('vehicle_pass_message').value
+        self._vehicle_stop_goto_message = self.get_parameter('vehicle_stop_goto_message').value
+
+        self._parking_free_threshold = int(self.get_parameter('parking_free_threshold').value)
+        self._parking_count_window = Duration(
+            seconds=float(self.get_parameter('parking_count_window_s').value))
+
+        self._drone_link_timeout = Duration(
+            seconds=float(self.get_parameter('drone_link_timeout_s').value))
 
         self._msg_timeout = Duration(seconds=float(self.get_parameter('message_timeout_s').value))
         control_rate_hz = float(self.get_parameter('control_rate_hz').value)
@@ -250,9 +312,44 @@ class SchoolTrafficControlNode(Node):
         # vehicle's votes can't leak into the next one's decision.
         self._plate_votes = deque(maxlen=plate_vote_window)
 
+        # Manual override: force the next plate check to pass, for when the
+        # plate-OCR pipeline isn't working. One-shot — consumed by _plate_ok
+        # the moment it's used, not latched across multiple vehicles.
+        self._force_plate_allowed = False
+
+        # Base-scan (SICK front+rear, /scan) close-proximity signal — OR'd
+        # with the camera+velodyne pedestrian check, see
+        # _pedestrian_in_alert_range. Published by base_scan_proximity.
+        self._close_proximity = False
+        self._close_proximity_stamp = None
+
+        # (stamp, raw_detections) samples from VehicleDetectionCounts,
+        # trimmed to the trailing parking_count_window_s on read — see
+        # _count_mode/_parking_space_free.
+        self._vehicle_counts_buffer = deque()
+
+        # Drone-link staleness tracking (no heartbeat exists upstream — see
+        # _tick's staleness check and drone_link_timeout_s). Starts False
+        # (unknown/no data yet) rather than True, so the first
+        # VehicleDetectionCounts ever received cleanly fires
+        # drone_link_restored ("link established") instead of silently
+        # assuming a link that was never confirmed; a drone that's never
+        # connected at all (drone_unavailable scenario) then correctly
+        # never crosses an edge, i.e. no spurious lost/restored events.
+        self._last_vehicle_counts_stamp = None
+        self._drone_link_up = False
+
+        # Forces the EMERGENCY state from anywhere; cleared -> MIDDLE_IDLE.
+        self._emergency = False
+
         self.create_subscription(VehicleDetectionArray, vehicles_topic, self._vehicles_cb, 10)
         self.create_subscription(PedestrianDetectionArray, pedestrians_topic, self._pedestrians_cb, 10)
         self.create_subscription(Bool, plate_allowed_topic, self._plate_cb, 10)
+        self.create_subscription(Bool, close_proximity_topic, self._close_proximity_cb, 10)
+        self.create_subscription(Bool, force_plate_allowed_topic, self._force_plate_cb, 10)
+        self.create_subscription(Bool, emergency_topic, self._emergency_cb, 10)
+        self.create_subscription(
+            VehicleDetectionCounts, drone_vehicle_detections_topic, self._vehicle_counts_cb, 10)
 
         # ── Perception load switching ────────────────────────────────────
         # Transient-local so a perception node that (re)starts after a mode
@@ -268,13 +365,19 @@ class SchoolTrafficControlNode(Node):
         self._pub_plate_enabled = self.create_publisher(
             Bool, plate_detection_enabled_topic, perception_mode_qos)
 
+        # Field-trial event log (see benchmark_logging/data_logger_node) —
+        # published unconditionally; this node doesn't know or care whether
+        # a trial is currently active, that's data_logger_node's job.
+        self._pub_benchmark_events = self.create_publisher(String, benchmark_events_topic, 10)
+
         # ── Action clients ───────────────────────────────────────────────
         self._nav_client = ActionClient(self, GoToXYPhi, go_to_xy_phi_action)
         self._motion_client = ActionClient(self, PlayMotion2, play_motion2_action)
-        self._say_client = ActionClient(self, TTS, tts_action)
+        self._audio_client = ActionClient(self, PlayAudio, play_audio_action)
 
         self._nav_goal_handle = None
         self._motion_goal_handle = None
+        self._audio_goal_handle = None
 
         # Bumped on every _send_nav_goal/_send_motion call so a goal
         # acceptance callback can tell whether it's still the latest
@@ -316,12 +419,41 @@ class SchoolTrafficControlNode(Node):
         # frame before actually treating the vehicle as gone. Reset to
         # None whenever target_vehicle is seen present again, and on entry
         # to each state that checks it (_enter_vehicle_stop,
-        # _enter_wait_to_leave, _enter_check_vehicle_in_range).
+        # _enter_wait_to_leave).
         self._vehicle_lost_since = None
 
-        # Pedestrian alert bookkeeping (independent of the state machine).
-        self._say_in_flight = False
-        self._last_say_stamp = None
+        # CROSS_VEHICLE/CHECK_VEHICLE_IN_RANGE two-car queue tracking. The id
+        # of the vehicle authorized/crossing (captured at CROSS_VEHICLE
+        # entry; -1 if the detector doesn't support tracking, in which case
+        # _crossing_vehicle_confirmed_gone falls back to the plain
+        # closest-vehicle-absent check). _had_second_vehicle records whether
+        # a second (queued, unauthorized) vehicle was ever seen in range
+        # during this crossing, so RETURNING knows which gesture to use.
+        # _vehicle_id_lost_since is a debounce timer, separate from
+        # _vehicle_lost_since above, for that specific tracked id's absence.
+        self._crossing_vehicle_id = -1
+        self._had_second_vehicle = False
+        self._vehicle_id_lost_since = None
+
+        # Set True on CROSS_VEHICLE entry; while True, _audio_result_cb
+        # keeps re-sending vehicle_pass_message until the state changes.
+        self._cross_vehicle_looping = False
+
+        # Audio playback bookkeeping (independent of the state machine).
+        self._audio_in_flight = False
+        self._last_audio_stamp = None
+
+        # ── Field-trial event-log bookkeeping (see _log_event) ──────────────
+        # State this _enter_* method transitioned FROM — set at the top of
+        # every _enter_* method, before it reassigns self._state, since
+        # every _enter_* method does that as its first line.
+        self._log_prev_state = None
+        # Which path _plate_ok() last returned True via ('force' or 'vote'),
+        # read by _enter_cross_vehicle for the plate_confirmed event.
+        self._last_plate_ok_via = None
+        # Which pose a nav goal was sent to ('pose_a'/'pose_b'), read by
+        # _nav_result_cb since it has no other way to know.
+        self._nav_target_name = None
 
         # ── State machine ────────────────────────────────────────────────
         self._state = State.MIDDLE_IDLE
@@ -347,6 +479,23 @@ class SchoolTrafficControlNode(Node):
         self._plate_stamp = self.get_clock().now()
         self._plate_votes.append(bool(msg.data))
 
+    def _close_proximity_cb(self, msg: Bool):
+        self._close_proximity = msg.data
+        self._close_proximity_stamp = self.get_clock().now()
+
+    def _force_plate_cb(self, msg: Bool):
+        if msg.data and not self._force_plate_allowed:
+            self._log_event('force_plate_allowed_set')
+        self._force_plate_allowed = msg.data
+
+    def _emergency_cb(self, msg: Bool):
+        self._emergency = msg.data
+
+    def _vehicle_counts_cb(self, msg: VehicleDetectionCounts):
+        now = self.get_clock().now()
+        self._vehicle_counts_buffer.append((now, int(msg.raw_detections)))
+        self._last_vehicle_counts_stamp = now
+
     # ── Perception load switching ────────────────────────────────────────
 
     def _set_perception_mode(self, traffic_enabled: bool, plate_enabled: bool):
@@ -356,6 +505,22 @@ class SchoolTrafficControlNode(Node):
         self._pub_traffic_enabled.publish(Bool(data=traffic_enabled))
         self._pub_plate_enabled.publish(Bool(data=plate_enabled))
 
+    # ── Field-trial event log ────────────────────────────────────────────
+
+    def _log_event(self, trigger: str, **metadata):
+        """Publish a structured, timestamped state-machine event for
+        field-trial data collection (see benchmark_logging). Published
+        unconditionally — benchmark_logging's data_logger_node is the only
+        place that decides whether a trial is currently active."""
+        payload = {
+            'stamp': self.get_clock().now().nanoseconds * 1e-9,
+            'prev_state': self._log_prev_state.name if self._log_prev_state else None,
+            'new_state': self._state.name,
+            'trigger': trigger,
+            **metadata,
+        }
+        self._pub_benchmark_events.publish(String(data=json.dumps(payload)))
+
     # ── Freshness / sensor helpers ──────────────────────────────────────
 
     def _is_fresh(self, stamp: Time) -> bool:
@@ -363,10 +528,13 @@ class SchoolTrafficControlNode(Node):
             return False
         return (self.get_clock().now() - stamp) < self._msg_timeout
 
-    def _closest_vehicle_in_range(self):
+    def _vehicles_in_range(self):
         if self._vehicles is None or not self._is_fresh(self._vehicles_stamp):
-            return None
-        candidates = [v for v in self._vehicles if self._range_near <= v.distance <= self._range_far]
+            return []
+        return [v for v in self._vehicles if self._range_near <= v.distance <= self._range_far]
+
+    def _closest_vehicle_in_range(self):
+        candidates = self._vehicles_in_range()
         if not candidates:
             return None
         return min(candidates, key=lambda v: v.distance)
@@ -375,8 +543,8 @@ class SchoolTrafficControlNode(Node):
         """True once target_vehicle has read as absent continuously for at
         least vehicle_lost_confirm_s — debounces a single dropped/late
         detection frame (e.g. right as a vehicle's stopped flag flips) so
-        VEHICLE_STOP/WAIT_TO_LEAVE/CHECK_VEHICLE_IN_RANGE don't flicker
-        back to MIDDLE_IDLE/RETURNING and immediately re-enter."""
+        VEHICLE_STOP/WAIT_TO_LEAVE don't flicker back to MIDDLE_IDLE and
+        immediately re-enter."""
         if target_vehicle is not None:
             self._vehicle_lost_since = None
             return False
@@ -384,6 +552,31 @@ class SchoolTrafficControlNode(Node):
             self._vehicle_lost_since = self.get_clock().now()
             return False
         return (self.get_clock().now() - self._vehicle_lost_since) >= self._vehicle_lost_confirm
+
+    def _crossing_vehicle_confirmed_gone(self) -> bool:
+        """CHECK_VEHICLE_IN_RANGE-specific version of _vehicle_confirmed_gone:
+        tracks the specific vehicle captured at CROSS_VEHICLE entry
+        (self._crossing_vehicle_id), not "current closest in-range vehicle"
+        — so a second, not-yet-authorized car queued behind it doesn't make
+        the robot think the first (authorized) car is still there. Falls
+        back to the plain closest-vehicle-absent check when id tracking
+        isn't available (-1)."""
+        if self._crossing_vehicle_id == -1:
+            return self._vehicle_confirmed_gone(self._closest_vehicle_in_range())
+
+        candidates = self._vehicles_in_range()
+        if len(candidates) >= 2 and not self._had_second_vehicle:
+            self._had_second_vehicle = True
+            self._log_event('second_vehicle_queued')
+        present = any(v.id == self._crossing_vehicle_id for v in candidates)
+
+        if present:
+            self._vehicle_id_lost_since = None
+            return False
+        if self._vehicle_id_lost_since is None:
+            self._vehicle_id_lost_since = self.get_clock().now()
+            return False
+        return (self.get_clock().now() - self._vehicle_id_lost_since) >= self._vehicle_lost_confirm
 
     def _pedestrian_blocking(self) -> bool:
         if not self._pedestrian_safety_gate:
@@ -396,21 +589,65 @@ class SchoolTrafficControlNode(Node):
         """True once at least plate_vote_min_yes of the last
         plate_vote_window plate_allowed readings were True — smooths over
         single-frame OCR noise (e.g. one stray False among mostly-True
-        readings) instead of trusting only the single latest message."""
+        readings) instead of trusting only the single latest message. Also
+        true (and self-clearing) if force_plate_allowed_topic forced this
+        one vehicle through — for when the OCR pipeline itself is down."""
+        if self._force_plate_allowed:
+            self._force_plate_allowed = False  # one-shot: consumed by this authorization
+            self._last_plate_ok_via = 'force'
+            return True
         if not self._is_fresh(self._plate_stamp):
             return False
-        return sum(self._plate_votes) >= self._plate_vote_min_yes
+        if sum(self._plate_votes) >= self._plate_vote_min_yes:
+            self._last_plate_ok_via = 'vote'
+            return True
+        return False
+
+    def _count_mode(self):
+        """Statistical mode of raw_detections over the trailing
+        parking_count_window_s — smooths a single noisy drone-detector
+        frame instead of trusting its own already-smoothed average/EMA
+        fields. None if no sample has arrived within the window."""
+        cutoff = self.get_clock().now() - self._parking_count_window
+        while self._vehicle_counts_buffer and self._vehicle_counts_buffer[0][0] < cutoff:
+            self._vehicle_counts_buffer.popleft()
+        if not self._vehicle_counts_buffer:
+            return None
+        counts = [c for _, c in self._vehicle_counts_buffer]
+        return Counter(counts).most_common(1)[0][0]
+
+    def _parking_space_free(self) -> bool:
+        mode = self._count_mode()
+        if mode is None:
+            return False
+        return mode < self._parking_free_threshold
 
     def _pedestrian_in_alert_range(self) -> bool:
-        if self._pedestrians is None or not self._is_fresh(self._pedestrians_stamp):
-            return False
-        return any(p.distance <= self._pedestrian_alert_range for p in self._pedestrians)
+        camera_lidar = (
+            self._pedestrians is not None and self._is_fresh(self._pedestrians_stamp)
+            and any(p.distance <= self._pedestrian_alert_range for p in self._pedestrians))
+        scan = self._close_proximity and self._is_fresh(self._close_proximity_stamp)
+        return camera_lidar or scan
 
     # ── Control loop / state machine ────────────────────────────────────
 
     def _tick(self):
+        # Checked before anything else, every tick, from any state — a
+        # forced emergency preempts autonomous behavior entirely so the
+        # robot can be teleoperated. Placed ahead of
+        # _maybe_retry_pending_goals so a goal queued right before the
+        # emergency can't sneak out on the same tick its cancel is issued.
+        if self._emergency:
+            if self._state != State.EMERGENCY:
+                self._enter_emergency()
+            return
+        if self._state == State.EMERGENCY:
+            self._enter_idle(reason='Emergency cleared')
+            return
+
         self._maybe_retry_pending_goals()
         self._maybe_alert_pedestrian()
+        self._maybe_check_drone_link()
 
         target_vehicle = self._closest_vehicle_in_range()
 
@@ -440,7 +677,7 @@ class SchoolTrafficControlNode(Node):
                     self._plate_votes.clear()
                     self._set_perception_mode(traffic_enabled=False, plate_enabled=True)
             elif self._plate_ok():
-                self._enter_cross_vehicle()
+                self._enter_cross_vehicle(target_vehicle)
             elif (self.get_clock().now() - self._check_plate_entered_at) > self._plate_confirmation_timeout:
                 self._enter_wait_to_leave()
 
@@ -452,6 +689,8 @@ class SchoolTrafficControlNode(Node):
                 if not self._wait_to_leave_stop_sent:
                     self._wait_to_leave_stop_sent = True
                     self._send_motion(self._motion_stop)
+                    self._send_audio(self._vehicle_stop_goto_message if self._parking_space_free()
+                                      else self._vehicle_stop_message)
                 if self._vehicle_confirmed_gone(target_vehicle):
                     self._enter_idle()
 
@@ -467,8 +706,10 @@ class SchoolTrafficControlNode(Node):
                 self._enter_check_vehicle_in_range()
 
         elif self._state == State.CHECK_VEHICLE_IN_RANGE:
-            if self._vehicle_confirmed_gone(target_vehicle):
-                # Vehicle has passed through — head back immediately.
+            if self._crossing_vehicle_confirmed_gone():
+                # The specific vehicle that was authorized/crossing has
+                # passed through — head back immediately, even if a second,
+                # not-yet-authorized vehicle is still queued in range.
                 self._enter_returning()
             elif not self._motion_done:
                 # Still finishing the previous wave cycle — wait for it
@@ -483,7 +724,9 @@ class SchoolTrafficControlNode(Node):
 
         elif self._state == State.RETURNING:
             if self._nav_done and self._motion_done:
+                self._log_prev_state = self._state
                 self._state = State.MIDDLE_IDLE
+                self._log_event('returned_to_pose_a')
                 self.get_logger().info('Back at middle pose — state=MIDDLE_IDLE')
 
     def _maybe_retry_pending_goals(self):
@@ -497,72 +740,153 @@ class SchoolTrafficControlNode(Node):
             self._maybe_dispatch_pending_motion()
 
     def _maybe_alert_pedestrian(self):
-        """Speak a warning when a pedestrian is close. Never touches motion."""
-        if not self._pedestrian_in_alert_range():
+        """Play a warning/introduction clip when a pedestrian is close.
+        Never touches motion. In MIDDLE_IDLE plays the friendlier
+        introduction clip; once a vehicle is being handled (any other
+        state), falls back to the plain caution clip — "when a vehicle
+        approaches, we focus on vehicles"."""
+        # Inlined from _pedestrian_in_alert_range's two sub-checks, purely
+        # so the triggering source can be logged — doesn't change that
+        # method's own return contract.
+        camera_lidar = (
+            self._pedestrians is not None and self._is_fresh(self._pedestrians_stamp)
+            and any(p.distance <= self._pedestrian_alert_range for p in self._pedestrians))
+        scan = self._close_proximity and self._is_fresh(self._close_proximity_stamp)
+        if not (camera_lidar or scan):
             return
-        if self._last_say_stamp is not None and (self.get_clock().now() - self._last_say_stamp) < \
+        if self._last_audio_stamp is not None and (self.get_clock().now() - self._last_audio_stamp) < \
                 self._pedestrian_alert_cooldown:
             return
-        self._send_say(self._pedestrian_alert_message)
+        if self._state == State.MIDDLE_IDLE:
+            message = self._pedestrian_introduction_message
+            trigger = 'pedestrian_introduction'
+        else:
+            message = self._pedestrian_alert_message
+            trigger = 'pedestrian_alert'
+        self._log_event(trigger, camera_lidar=camera_lidar, scan=scan)
+        self._send_audio(message)
+
+    def _maybe_check_drone_link(self):
+        """Edge-detected drone-link staleness — no heartbeat topic exists
+        upstream, so "link down" is inferred purely from a gap between
+        VehicleDetectionCounts arrivals exceeding drone_link_timeout_s.
+        This is new instrumentation logic, not a pre-existing signal."""
+        if self._last_vehicle_counts_stamp is None:
+            return  # no data ever received yet — see _drone_link_up's init comment
+        stale = (self.get_clock().now() - self._last_vehicle_counts_stamp) > self._drone_link_timeout
+        if stale and self._drone_link_up:
+            self._drone_link_up = False
+            self._log_event('drone_link_lost')
+        elif not stale and not self._drone_link_up:
+            self._drone_link_up = True
+            self._log_event('drone_link_restored')
 
     # ── State transitions ───────────────────────────────────────────────
 
     def _enter_vehicle_stop(self):
+        self._log_prev_state = self._state
         self._state = State.VEHICLE_STOP
         self._vehicle_lost_since = None
         self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture, watching for it to stop)')
+        self._log_event('vehicle_detected')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_motion(self._motion_stop)
-        self._send_say(self._vehicle_stop_message)
+        self._send_audio(self._vehicle_stop_message)
 
     def _enter_check_plate(self):
+        self._log_prev_state = self._state
         self._state = State.CHECK_PLATE
         # Left None until the head-down motion finishes — see _tick, which
         # starts the actual plate checking (perception mode + votes +
         # timeout timer) only once that happens.
         self._check_plate_entered_at = None
         self.get_logger().info('Vehicle stopped — state=CHECK_PLATE (head down, checking plate)')
+        self._log_event('vehicle_stopped_confirmed')
         self._send_motion(self._motion_head_down)
 
     def _enter_wait_to_leave(self):
+        self._log_prev_state = self._state
         self._state = State.WAIT_TO_LEAVE
         self._wait_to_leave_stop_sent = False
         self._vehicle_lost_since = None
         self.get_logger().info('Plate not confirmed in time — state=WAIT_TO_LEAVE (head up, then stop gesture, waiting for vehicle to leave)')
+        self._log_event('plate_confirmation_timeout')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_motion(self._motion_head_up)
 
-    def _enter_cross_vehicle(self):
+    def _enter_cross_vehicle(self, target_vehicle):
+        self._log_prev_state = self._state
         self._state = State.CROSS_VEHICLE
         self._pass_gesture_sent = False
+        # Two-car queue tracking (see _crossing_vehicle_confirmed_gone):
+        # remember which vehicle this crossing authorizes, and reset the
+        # per-crossing queue bookkeeping fresh for this car.
+        self._crossing_vehicle_id = target_vehicle.id if target_vehicle is not None else -1
+        self._had_second_vehicle = False
+        self._vehicle_id_lost_since = None
         self.get_logger().info('Plate allowed — state=CROSS_VEHICLE (move to pose B, head left)')
+        self._log_event('plate_confirmed', via=self._last_plate_ok_via)
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
+        self._nav_target_name = 'pose_b'
+        self._log_event('nav_goal_sent', target='pose_b')
         self._send_nav_goal(self._pose_b)
         self._send_motion(self._motion_head_left)
         self._send_motion(self._motion_right_init)
-        self._send_say(self._vehicle_pass_message)
+        # Looped for the whole state — see _audio_result_cb.
+        self._cross_vehicle_looping = True
+        self._send_audio(self._vehicle_pass_message)
 
     def _enter_check_vehicle_in_range(self):
+        self._log_prev_state = self._state
         self._state = State.CHECK_VEHICLE_IN_RANGE
         self._vehicle_lost_since = None
+        self._stop_cross_vehicle_audio_loop()
         self.get_logger().info('At pose B — state=CHECK_VEHICLE_IN_RANGE (pass gesture, then waving)')
+        self._log_event('arrived_pose_b')
 
     def _enter_returning(self):
+        self._log_prev_state = self._state
         self._state = State.RETURNING
-        self.get_logger().info('Vehicle passed — state=RETURNING (move to pose A + default gesture)')
+        self.get_logger().info('Vehicle passed — state=RETURNING (move to pose A + gesture)')
+        self._log_event('crossing_vehicle_gone')
+        self._nav_target_name = 'pose_a'
+        self._log_event('nav_goal_sent', target='pose_a')
         self._send_nav_goal(self._pose_a)
         self._send_motion(self._motion_head_front)
-        self._send_motion(self._motion_arms_init)
+        # A second (queued, unauthorized) car was in range at some point
+        # during the crossing -> keep the stop gesture so it doesn't think
+        # it's been waved through too. Otherwise, default/arms_init.
+        self._send_motion(self._motion_stop if self._had_second_vehicle else self._motion_arms_init)
 
-    def _enter_idle(self):
+    def _enter_idle(self, reason: str = 'Vehicle left range'):
+        self._log_prev_state = self._state
         self._state = State.MIDDLE_IDLE
-        self.get_logger().info('Vehicle left range — state=MIDDLE_IDLE (default gesture)')
+        self.get_logger().info(f'{reason} — state=MIDDLE_IDLE (default gesture)')
+        self._log_event('vehicle_left_range' if reason == 'Vehicle left range' else 'emergency_cleared')
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_motion(self._motion_arms_init)
+
+    def _enter_emergency(self):
+        self._log_prev_state = self._state
+        self._state = State.EMERGENCY
+        self.get_logger().warn('Emergency flag set — state=EMERGENCY (canceling autonomous goals, holding for teleop)')
+        self._log_event('emergency_triggered')
+        if self._nav_goal_handle is not None:
+            self._nav_goal_handle.cancel_goal_async()
+        if self._motion_goal_handle is not None:
+            self._motion_goal_handle.cancel_goal_async()
+        self._nav_pending = None
+        self._motion_pending = None
+        self._stop_cross_vehicle_audio_loop()
 
     def _passing_vehicle(self):
         self.get_logger().info('Plate allowed — state=CHECK_VEHICLE_IN_RANGE (waving)')
         self._send_motion(self._motion_pass_wave)
+
+    def _stop_cross_vehicle_audio_loop(self):
+        self._cross_vehicle_looping = False
+        if self._audio_goal_handle is not None:
+            self._audio_goal_handle.cancel_goal_async()
 
 
     # ── Action helpers ───────────────────────────────────────────────────
@@ -659,41 +983,44 @@ class SchoolTrafficControlNode(Node):
         if request_id == self._motion_request_id:
             self._dispatch_motion(motion_name, request_id)
 
-    def _send_say(self, text: str):
-        if self._say_in_flight:
-            # Don't overlap TTS goals — vehicle-stop/pass announcements and
-            # the pedestrian alert all share this one action client.
+    def _send_audio(self, file_name: str):
+        if self._audio_in_flight:
+            # Don't overlap audio goals — vehicle-stop/pass announcements
+            # and the pedestrian alert all share this one action client.
             return
 
-        goal = TTS.Goal()
-        goal.input = text
-        goal.locale = 'en_US'
-        goal.voice = ''
+        goal = PlayAudio.Goal()
+        goal.file_name = file_name
 
-        if not self._say_client.wait_for_server(timeout_sec=0.0):
-            self.get_logger().warn('TTS action server not available')
+        if not self._audio_client.wait_for_server(timeout_sec=0.0):
+            self.get_logger().warn('play_audio action server not available')
             return
 
-        self._say_in_flight = True
-        future = self._say_client.send_goal_async(goal)
-        future.add_done_callback(self._say_goal_response_cb)
+        self._audio_in_flight = True
+        future = self._audio_client.send_goal_async(goal)
+        future.add_done_callback(self._audio_goal_response_cb)
 
-    def _say_goal_response_cb(self, future):
+    def _audio_goal_response_cb(self, future):
         goal_handle = future.result()
         if not goal_handle or not goal_handle.accepted:
-            self.get_logger().warn('TTS goal rejected')
-            self._say_in_flight = False
+            self.get_logger().warn('play_audio goal rejected')
+            self._audio_in_flight = False
             return
+        self._audio_goal_handle = goal_handle
         result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self._say_result_cb)
+        result_future.add_done_callback(self._audio_result_cb)
 
-    def _say_result_cb(self, future):
-        # Field names on tts_msgs/action/TTS's Result aren't vendored in
-        # this workspace to check, so only the generic goal status (always
-        # present on any action's WrappedResult) is logged here.
-        self.get_logger().info(f'TTS result: status={future.result().status}')
-        self._say_in_flight = False
-        self._last_say_stamp = self.get_clock().now()
+    def _audio_result_cb(self, future):
+        result = future.result().result
+        self.get_logger().info(f'play_audio result: success={result.success} ({result.message})')
+        self._audio_in_flight = False
+        self._audio_goal_handle = None
+        self._last_audio_stamp = self.get_clock().now()
+        # CROSS_VEHICLE loops vehicle_pass_message for the whole state —
+        # re-trigger here as long as we're still in it (see
+        # _enter_cross_vehicle / _stop_cross_vehicle_audio_loop).
+        if self._cross_vehicle_looping and self._state == State.CROSS_VEHICLE:
+            self._send_audio(self._vehicle_pass_message)
 
     def _nav_goal_response_cb(self, future, request_id):
         goal_handle = future.result()
@@ -738,6 +1065,8 @@ class SchoolTrafficControlNode(Node):
     def _nav_result_cb(self, future):
         result = future.result().result
         self.get_logger().info(f'go_to_xy_phi result: success={result.success} ({result.message})')
+        self._log_event('nav_goal_result', target=self._nav_target_name,
+                         success=result.success, message=result.message)
         self._nav_done = True
         self._maybe_dispatch_pending_nav_goal()
 

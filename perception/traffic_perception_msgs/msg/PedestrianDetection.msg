@@ -3,3 +3,4 @@
 int32 id                      # stable track id from the upstream detector, -1 if unknown
 float64 distance              # distance from the robot to the pedestrian [m]
 geometry_msgs/Point position  # pedestrian position in the sensor/robot frame [m]
+float64 confidence            # YOLO detection confidence [0,1] for this box

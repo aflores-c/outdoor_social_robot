@@ -1,0 +1,7 @@
+base_scan_proximity_node:
+  ros__parameters:
+    # Base's own 2D lidar (SICK front+rear merged/filtered by PAL's
+    # omni_base_laser_sensors) — NOT the roof-mounted Velodyne.
+    scan_topic: "/scan"
+    proximity_range_m: 1.5
+    close_proximity_topic: "/perception/close_proximity"

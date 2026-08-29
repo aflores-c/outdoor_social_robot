@@ -1,0 +1,7 @@
+robot_audio_node:
+  ros__parameters:
+    # Empty -> falls back to this package's installed audio/ directory
+    # (share/robot_audio/audio).
+    audio_dir: ""
+    play_audio_action: "play_audio"
+    player_command: "ffplay"

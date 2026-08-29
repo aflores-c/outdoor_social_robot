@@ -1,0 +1,23 @@
+trial_manager_node:
+  ros__parameters:
+    trial_control_topic: "/benchmark/trial_control"
+    current_trial_topic: "/benchmark/current_trial"
+    camera_compressed_topic: "/camera/realsense2_camera/color/image_raw/compressed"
+    camera_throttled_topic: "/benchmark/camera_throttled/compressed"
+    camera_throttle_hz: 5.0
+    lidar_topic: "/velodyne_points"
+    bag_output_dir: "~/benchmark_data"
+
+data_logger_node:
+  ros__parameters:
+    current_trial_topic: "/benchmark/current_trial"
+    events_topic: "/benchmark/events"
+    vehicles_topic: "/perception/vehicles"
+    pedestrians_topic: "/perception/pedestrians"
+    plate_result_topic: "/perception/plate_result"
+    close_proximity_topic: "/perception/close_proximity"
+    drone_counts_topic: "drone_vehicle_detections"
+    drone_link_status_topic: "drone_vehicle_detections_link_status"
+    pose_topic: "/amcl_pose"
+    pose_log_hz: 2.0
+    log_dir: "~/benchmark_data"

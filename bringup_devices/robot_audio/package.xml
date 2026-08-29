@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_audio</name>
+  <version>0.1.0</version>
+  <description>
+    Robot audio playback node. Exposes a PlayAudio action server
+    (robot_audio_msgs) that plays an mp3 file, looked up by name in this
+    package's bundled audio/ directory, through the system's default audio
+    output via ffplay.
+  </description>
+  <maintainer email="andy.flores@pucp.edu.pe">Andy Flores</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>robot_audio_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

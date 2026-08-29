@@ -1,0 +1,11 @@
+# Name of the mp3 file to play, with or without the .mp3 extension.
+# Resolved against robot_audio's bundled audio/ directory — only the
+# basename is honored, so path components (e.g. "../secret") can't escape
+# that directory.
+string file_name
+---
+# Result
+bool success
+string message
+---
+# Feedback (none — playback isn't long/progressive enough to need it)

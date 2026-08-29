@@ -555,11 +555,12 @@ class TrafficObjectDetectorNode(Node):
         msg = PedestrianDetectionArray()
         msg.header.stamp    = stamp
         msg.header.frame_id = self._lidar_frame
-        for x, y, z, _ in poses_3d:
+        for x, y, z, conf in poses_3d:
             d = PedestrianDetection()
             d.id = -1  # no persistent tracking
             d.distance = float(np.sqrt(x**2 + y**2))
             d.position = Point(x=float(x), y=float(y), z=float(z))
+            d.confidence = float(conf)
             msg.pedestrians.append(d)
         self._pub_pedestrians.publish(msg)
 
@@ -614,11 +615,12 @@ class TrafficObjectDetectorNode(Node):
             dists = [float(np.sqrt(x**2 + y**2)) for x, y, z, _ in poses_3d]
             closest_idx = int(np.argmin(dists))
 
-        for i, (x, y, z, _) in enumerate(poses_3d):
+        for i, (x, y, z, conf) in enumerate(poses_3d):
             d = VehicleDetection()
             d.id = -1  # no persistent tracking
             d.distance = float(np.sqrt(x**2 + y**2))
             d.position = Point(x=float(x), y=float(y), z=float(z))
+            d.confidence = float(conf)
             # Only the closest vehicle is tracked for "stopped" (see
             # _update_stopped_tracking) — others in frame simultaneously
             # always read False.

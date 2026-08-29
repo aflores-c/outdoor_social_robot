@@ -35,6 +35,12 @@ Published topics:
   <plate_allowed_topic>                  std_msgs/Bool  (default /perception/plate_allowed
                                           — consumed by decision_making/school_traffic_control)
   /vehicle_plate_detection/last_plate    std_msgs/String  (most recent OCR'd plate text)
+  <plate_result_topic>                   traffic_perception_msgs/PlateResult  (default
+                                          /perception/plate_result — one message per
+                                          detected box, correlating plate_text with its
+                                          det/OCR confidence and authorized decision, for
+                                          field-trial data collection; additive, doesn't
+                                          replace the two topics above)
   /vehicle_plate_detection/debug_image   sensor_msgs/Image
 """
 
@@ -49,6 +55,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Bool, String
+from traffic_perception_msgs.msg import PlateResult
 
 import torch
 from ultralytics import YOLO
@@ -78,6 +85,7 @@ class PlateDetectorNode(Node):
         # ── Parameters ────────────────────────────────────────────────────────
         self.declare_parameter('rgb_topic', '/camera/realsense2_camera/color/image_raw')
         self.declare_parameter('plate_allowed_topic', '/perception/plate_allowed')
+        self.declare_parameter('plate_result_topic', '/perception/plate_result')
 
         # Plate DETECTOR weights — a fine-tuned YOLO model, e.g. trained on a
         # license-plate dataset (Roboflow "license-plate-recognition" or
@@ -105,6 +113,7 @@ class PlateDetectorNode(Node):
 
         rgb_topic          = self.get_parameter('rgb_topic').value
         plate_allowed_topic = self.get_parameter('plate_allowed_topic').value
+        plate_result_topic = self.get_parameter('plate_result_topic').value
         enabled_topic        = self.get_parameter('enabled_topic').value
         model_path          = self.get_parameter('plate_model').value
         self._conf           = float(self.get_parameter('confidence').value)
@@ -160,6 +169,7 @@ class PlateDetectorNode(Node):
         # ── Publishers ────────────────────────────────────────────────────────
         self._pub_allowed = self.create_publisher(Bool, plate_allowed_topic, 10)
         self._pub_last_plate = self.create_publisher(String, '/vehicle_plate_detection/last_plate', 10)
+        self._pub_plate_result = self.create_publisher(PlateResult, plate_result_topic, 10)
         self._pub_debug = self.create_publisher(Image, '/vehicle_plate_detection/debug_image', 5)
 
         self.get_logger().info(
@@ -241,6 +251,14 @@ class PlateDetectorNode(Node):
                     last_plate = plate_text
                 if is_registered:
                     allowed = True
+
+                pr = PlateResult()
+                pr.header.stamp = img_msg.header.stamp
+                pr.plate_text = plate_text
+                pr.det_confidence = float(det_conf)
+                pr.ocr_confidence = float(plate_conf)
+                pr.authorized = bool(is_registered)
+                self._pub_plate_result.publish(pr)
 
                 color = (0, 220, 0) if is_registered else (0, 0, 220)
                 cv2.rectangle(debug_img, (x1, y1), (x2, y2), color, 2)

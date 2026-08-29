@@ -4,6 +4,18 @@ school_traffic_control_node:
     vehicles_topic: /perception/vehicles
     pedestrians_topic: /perception/pedestrians
     plate_allowed_topic: /perception/plate_allowed
+    # base_scan_proximity (SICK front+rear /scan) — OR'd with the
+    # camera+velodyne pedestrian check above for the alert trigger.
+    close_proximity_topic: /perception/close_proximity
+    # Manual override: force the next plate check to pass (OCR pipeline
+    # down). One-shot — auto-clears after authorizing one vehicle.
+    force_plate_allowed_topic: /perception/force_plate_allowed
+    # drone_traffic_perception's VehicleDetectionCounts topic.
+    drone_vehicle_detections_topic: drone_vehicle_detections
+    # Forces the EMERGENCY state (teleop) from anywhere; clear -> MIDDLE_IDLE.
+    emergency_topic: /school_traffic_control/emergency
+    # Field-trial event log (see decision_making/benchmark_logging).
+    benchmark_events_topic: /benchmark/events
 
     # Perception load switching: traffic_object_detection and
     # vehicle_plate_detection are both heavy YOLO models the Jetson can't
@@ -14,10 +26,10 @@ school_traffic_control_node:
     traffic_detection_enabled_topic: /perception/traffic_object_detection_enabled
     plate_detection_enabled_topic: /perception/plate_detection_enabled
 
-    # Action servers (base_navigation, play_motion2 and tts_engine bringup)
+    # Action servers (base_navigation, play_motion2, robot_audio bringup)
     go_to_xy_phi_action: go_to_xy_phi
     play_motion2_action: play_motion2
-    tts_action: /tts_engine/tts
+    play_audio_action: play_audio
 
     # Pose A — middle of the road, default holding position
     # Captured via `ros2 run tf2_ros tf2_echo map base_link` at the robot's
@@ -61,16 +73,33 @@ school_traffic_control_node:
     pedestrian_safety_gate: false
     pedestrian_zone_m: 5.0
 
-    # Pedestrian alert: within this range, warn verbally via TTS.
-    # This never affects base/arm motion — traffic control stays the only
-    # motion-driving task.
+    # Pedestrian alert: within this range, play an audio clip. This never
+    # affects base/arm motion — traffic control stays the only
+    # motion-driving task. In MIDDLE_IDLE, pedestrian_introduction_message
+    # plays instead of the plain alert; once a vehicle is being handled, we
+    # focus on vehicles and fall back to pedestrian_alert_message.
     pedestrian_alert_range_m: 5.0
-    pedestrian_alert_message: "Caution, pedestrian, please stand clear."
+    pedestrian_alert_message: "safe_audio.mp3"
+    pedestrian_introduction_message: "presentation_audio.mp3"
     pedestrian_alert_cooldown_s: 5.0
 
-    # Voice announcements on vehicle state transitions, via TTS.
-    vehicle_stop_message: "Stop, please. Let the children cross."
-    vehicle_pass_message: "You may proceed."
+    # Audio clips on vehicle state transitions, via robot_audio.
+    vehicle_stop_message: "stop_audio.mp3"
+    vehicle_pass_message: "enter_audio.mp3"
+    # Played instead of vehicle_stop_message in WAIT_TO_LEAVE when a
+    # parking space is free outside the school (see parking_free_threshold).
+    vehicle_stop_goto_message: "go_to_sfo_audio.mp3"
+
+    # VehicleDetectionCounts.raw_detections is buffered over this trailing
+    # window and its statistical mode compared against parking_free_threshold.
+    parking_free_threshold: 12
+    parking_count_window_s: 1.0
+
+    # Drone link staleness: no heartbeat topic exists upstream, so this is
+    # inferred purely from gaps between VehicleDetectionCounts arrivals.
+    # Not message_timeout_s (1.0s) — the drone's own RTMP reconnect cycle
+    # is ~1s and would flap this constantly at that value.
+    drone_link_timeout_s: 4.0
 
     # Sensor messages older than this are treated as stale/unknown
     message_timeout_s: 1.0

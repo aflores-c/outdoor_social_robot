@@ -1,14 +1,15 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>vehicle_plate_detection</name>
+  <name>base_scan_proximity</name>
   <version>0.1.0</version>
   <description>
-    License plate detection + registration check. Runs a plate-specific
-    YOLO detector (not the COCO model used by traffic_object_detection) and
-    OCR to read plate text, then publishes a std_msgs/Bool indicating
-    whether a currently visible plate is on the school's registered
-    allow-list. Consumed by decision_making/school_traffic_control.
+    Close-range obstacle-proximity safety net using the robot base's own
+    2D lidar (SICK front+rear, merged/filtered by PAL's omni_base_laser_sensors
+    into /scan) — distinct from the roof-mounted Velodyne used for vehicle
+    and pedestrian classification. Publishes a plain Bool "something is
+    very close" signal, OR'd into school_traffic_control's pedestrian
+    alert alongside its camera+velodyne detection.
   </description>
   <maintainer email="andy.flores@pucp.edu.pe">Andy Flores</maintainer>
   <license>MIT</license>
@@ -20,14 +21,6 @@
   <depend>launch_ros</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
-  <depend>traffic_perception_msgs</depend>
-  <depend>cv_bridge</depend>
-  <depend>realsense2_camera</depend>
-
-  <depend>python3-numpy</depend>
-  <depend>python3-opencv</depend>
-  <!-- ultralytics, easyocr (and torch, separately) installed via pip into
-       a DEDICATED venv (not yolo_ros) — see DEPLOYMENT.md, requirements.txt -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

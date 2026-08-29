@@ -9,3 +9,4 @@ bool stopped                  # true once this vehicle's distance has stayed wit
                                # stopped_distance_epsilon_m for stopped_confirm_time_s.
                                # Single-target continuity heuristic (closest vehicle
                                # per frame), not full multi-object tracking — see id.
+float64 confidence            # YOLO detection confidence [0,1] for this box

@@ -6,3 +6,8 @@ devel/
 __pycache__/
 .vscode/
 .idea/
+
+# Large runtime artifacts — never track these
+perception/drone_traffic_perception/videos/
+perception/drone_traffic_perception/logs/
+perception/drone_traffic_perception/models/

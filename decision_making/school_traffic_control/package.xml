@@ -5,12 +5,16 @@
   <version>0.1.0</version>
   <description>
     Decision-making node for school traffic control. Consumes vehicle and
-    pedestrian detections (traffic_perception_msgs) and a plate-allowed
-    bool, and drives the robot base (base_navigation GoToXYPhi action) and
-    arm gestures (play_motion2 PlayMotion2 action) to hold, stop, and wave
-    vehicles through a crossing. Pedestrians and vehicle stop/pass events
-    only trigger a spoken announcement via the tts_engine TTS action and
-    never affect motion.
+    pedestrian detections (traffic_perception_msgs), a base-scan close
+    proximity signal, a plate-allowed bool, a force-plate-allowed override,
+    drone-based parking counts (drone_traffic_perception), and an emergency
+    flag; drives the robot base (base_navigation GoToXYPhi action) and arm
+    gestures (play_motion2 PlayMotion2 action) to hold, stop, and wave
+    vehicles through a crossing, tracking a queue of up to two cars.
+    Pedestrians and vehicle stop/pass events trigger audio clips via the
+    robot_audio PlayAudio action and never affect motion. Publishes a
+    structured JSON event on every state transition/trigger for field-trial
+    data collection — see decision_making/benchmark_logging.
   </description>
   <maintainer email="andy.flores@pucp.edu.pe">Andy Flores</maintainer>
   <license>MIT</license>
@@ -25,9 +29,8 @@
   <depend>traffic_perception_msgs</depend>
   <depend>base_navigation</depend>
   <depend>play_motion2_msgs</depend>
-  <!-- tts_msgs (PAL tts_engine) — not vendored in this dev workspace,
-       available on-robot only. -->
-  <depend>tts_msgs</depend>
+  <depend>robot_audio_msgs</depend>
+  <depend>drone_traffic_perception</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
