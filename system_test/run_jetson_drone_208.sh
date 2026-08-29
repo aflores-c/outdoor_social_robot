@@ -42,9 +42,7 @@ echo "    USE_RTMP/RTMP_URL constants near the bottom of the file."
   source /opt/ros/humble/setup.bash
   source "$ROS2_WS/install/setup.bash"
   source ~/visdrone_deployment/venv/bin/activate
-  # Per perception/drone_traffic_perception/README.md — adjust if this
-  # Jetson's checkout nests it under outdoor_social_robot/ instead.
-  cd "$ROS2_WS/src/drone_traffic_perception"
+  cd "$ROS2_WS/src/outdoor_social_robot/perception/drone_traffic_perception"
   export ROS_DOMAIN_ID=2
   exec python main.py
 ) > "$LOGDIR/drone_traffic_perception.log" 2>&1 < /dev/null &
