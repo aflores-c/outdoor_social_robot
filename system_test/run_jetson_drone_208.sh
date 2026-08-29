@@ -7,7 +7,9 @@
 #
 # Logs land in ~/system_test_logs/*.log — tail -f any of them to check status.
 
-set -u
+# Deliberately no `set -u` — ROS 2's setup.bash itself references unset
+# variables internally (e.g. AMENT_TRACE_SETUP_FILES), so nounset breaks
+# sourcing it.
 export ROS_DOMAIN_ID=2
 ROS2_WS=~/ros2_ws
 
