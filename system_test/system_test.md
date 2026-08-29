@@ -167,9 +167,16 @@ actually approaches — that's expected, not a bug.
 
 ### 2.5 Jetson — drone (10.68.0.208)
 
+This script relies on `~/.bashrc` already exporting the correct
+`RMW_IMPLEMENTATION`/`CYCLONEDDS_URI` for this machine (with the right DDS
+peers to reach the robot) — run it from an **interactive** login, not a
+one-line `ssh host 'command'` invocation, since a non-interactive SSH
+command doesn't reliably source `.bashrc` and will silently fall back to
+the wrong RMW:
 ```bash
 scp src/system_test/run_jetson_drone_208.sh tiago-jetson@10.68.0.208:~/
-ssh tiago-jetson@10.68.0.208 './run_jetson_drone_208.sh'
+ssh tiago-jetson@10.68.0.208     # log in interactively
+./run_jetson_drone_208.sh
 ```
 Brings up GPS + IMU (data storage only, not consumed by the state machine
 yet) and the drone/VisDrone perception over RTMP. Verify with:

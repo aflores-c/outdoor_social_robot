@@ -10,6 +10,13 @@
 # Deliberately no `set -u` — ROS 2's setup.bash itself references unset
 # variables internally (e.g. AMENT_TRACE_SETUP_FILES), so nounset breaks
 # sourcing it.
+#
+# RMW_IMPLEMENTATION/CYCLONEDDS_URI are deliberately NOT set here — this
+# machine's ~/.bashrc already exports the correct ones (with the right DDS
+# peers to reach the robot). Run this script from an interactive shell
+# (plain `./run_jetson_drone_208.sh`, not via a non-login `bash -s <` pipe)
+# so that environment is actually inherited; overriding it here previously
+# pointed CYCLONEDDS_URI at the wrong file and broke discovery.
 export ROS_DOMAIN_ID=2
 ROS2_WS=~/ros2_ws
 
