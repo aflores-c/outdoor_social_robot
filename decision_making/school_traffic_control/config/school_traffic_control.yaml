@@ -34,16 +34,16 @@ school_traffic_control_node:
     # Pose A — middle of the road, default holding position
     # Captured via `ros2 run tf2_ros tf2_echo map base_link` at the robot's
     # holding spot.
-    pose_a_x: -3.912
-    pose_a_y: 25.471
-    pose_a_phi_deg: 179.6
+    pose_a_x: -0.521
+    pose_a_y: 0.302
+    pose_a_phi_deg: 91.25
 
     # Pose B — cleared position used while letting a vehicle pass
     # Captured via `ros2 run tf2_ros tf2_echo map base_link` at the
     # pulled-aside spot.
-    pose_b_x: -2.007
-    pose_b_y: 23.564
-    pose_b_phi_deg: 127.5
+    pose_b_x: -1.84
+    pose_b_y: -1.029
+    pose_b_phi_deg: 59.47
 
     # Arm gesture motion names — must exist in the play_motion2_mgr
     # `motions` parameter, see config/arm_motions.yaml
