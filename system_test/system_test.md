@@ -45,7 +45,26 @@ documented per-package:
 - Jetson 10.68.0.208: `perception/drone_traffic_perception/README.md` (venv
   `~/visdrone_deployment/venv`). Also runs `robot_audio`/`robot_audio_msgs`
   (plain `colcon build`, no venv) — this is where the external speaker is
-  physically connected, not the robot.
+  physically connected, not the robot. This machine's onboard/built-in
+  audio sink is a non-functional stub; the real device is a USB adapter
+  (`KTMICRO KT USB Audio`). `run_jetson_drone_208.sh` re-asserts the
+  correct default sink + volume on every run, but for it to actually
+  *persist* across PulseAudio restarts (it's a `systemd --user`,
+  socket-activated service and does restart on its own), this **system
+  config, not tracked in git**, needs to exist on this machine —
+  recreate it if .208 is ever re-imaged:
+  ```bash
+  sudo mkdir -p /etc/pulse/default.pa.d
+  sudo tee /etc/pulse/default.pa.d/99-usb-audio-default.pa > /dev/null <<'EOF'
+  set-default-sink alsa_output.usb-KTMICRO_KT_USB_Audio_2020-02-20-0000-0000-0000-00.analog-stereo
+  EOF
+  systemctl --user restart pulseaudio.service
+  ```
+  (Volume doesn't need a line here — PulseAudio's own
+  `~/.config/pulse/*-device-volumes.tdb` already remembers the last volume
+  set via `pactl set-sink-volume` per device, independent of this file; a
+  `set-sink-volume` line in `default.pa.d` is a no-op anyway since the USB
+  card isn't enumerated yet at that point in startup.)
 - Robot 10.68.0.1: workspace already built at
   `~/outdoor_robot_ws` (`/home/pal/outdoor_robot_ws/src/outdoor_social_robot/...`).
 

@@ -53,8 +53,13 @@ echo "    not listed in 'aplay -l' (see this session's audio troubleshooting)."
 USB_SINK=$(pactl list short sinks 2>/dev/null | grep -i usb | awk '{print $2}' | head -1)
 if [ -n "$USB_SINK" ]; then
   pactl set-default-sink "$USB_SINK"
-  pactl set-sink-volume "$USB_SINK" 100%
+  pactl set-sink-volume "$USB_SINK" 150%
   echo "    default sink -> $USB_SINK"
+  echo "    (this machine also has /etc/pulse/default.pa.d/99-usb-audio-default.pa"
+  echo "    for persistence across PulseAudio restarts -- this is just a"
+  echo "    belt-and-suspenders re-assert, not the primary fix; that file is"
+  echo "    system config, not tracked in this repo, so it won't survive a"
+  echo "    Jetson reflash -- recreate it if this machine is ever re-imaged.)"
 else
   echo "    WARNING: no USB audio sink found via 'pactl list short sinks'"
   echo "    -- check the speaker is connected, robot_audio will likely be silent."
