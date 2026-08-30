@@ -188,43 +188,20 @@ smoothly, not jump).
 ### 2.3 Capture pose A and pose B (first time at a new site only)
 
 Once localization has converged, drive the robot to the "middle of the
-road" holding spot and read its pose. `tf2_echo` only prints RPY in
-radians on this robot's tf2_ros build (no degree line), so pull `x`, `y`,
-and yaw directly and convert instead of eyeballing it:
+road" holding spot and read its pose with `get_pose.py` (lives alongside
+this file, in `src/system_test/` — copy it onto the robot once, e.g. `scp
+src/system_test/get_pose.py pal@10.68.0.1:~/`):
 ```bash
-python3 - <<'PY'
-import math
-import rclpy
-from rclpy.node import Node
-from rclpy.time import Time
-from tf2_ros import Buffer, TransformListener
-
-rclpy.init()
-node = Node('pose_reader')
-buf = Buffer()
-TransformListener(buf, node)
-
-tf = None
-for _ in range(50):
-    rclpy.spin_once(node, timeout_sec=0.2)
-    try:
-        tf = buf.lookup_transform('map', 'base_link', Time())
-        break
-    except Exception:
-        pass
-
-if tf is None:
-    print('no map -> base_link transform yet — is AMCL up and converged?')
-else:
-    t, q = tf.transform.translation, tf.transform.rotation
-    yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-    print(f'x={t.x:.3f} y={t.y:.3f} phi_deg={math.degrees(yaw):.2f}')
-
-rclpy.shutdown()
-PY
+python3 get_pose.py
 ```
-That prints `x`, `y`, and `phi_deg` directly — that's pose A. Drive to the
-pulled-aside spot and repeat for pose B. Fill both into
+This prints `x`, `y`, and `phi_deg` directly (parsing `tf2_echo`'s own RPY
+output is unreliable — plain `ros2 run tf2_ros tf2_echo map base_link`
+works too and does print an RPY-in-degrees line, but a fresh listener can
+take several seconds to discover the TF publishers over DDS the first
+time, so don't assume "no transform yet" on the first try means AMCL isn't
+converged — `get_pose.py` already retries for up to 30s and prints a
+waiting message every 5s so a real hang is still obvious). That's pose A.
+Drive to the pulled-aside spot and repeat for pose B. Fill both into
 `decision_making/school_traffic_control/config/school_traffic_control.yaml`
 (`pose_a_x/y/phi_deg`, `pose_b_x/y/phi_deg`), then on the robot:
 ```bash
