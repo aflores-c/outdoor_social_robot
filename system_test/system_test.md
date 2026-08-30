@@ -11,10 +11,10 @@ first time you run it.
 
 | Machine | IP | User | Role |
 |---|---|---|---|
-| Robot onboard PC | 10.68.0.1 | pal | Localization, navigation, traffic control state machine |
+| Robot onboard PC | 10.68.0.1 | pal | Localization, navigation, traffic control state machine, GPS/RTK |
 | Dev computer | 10.68.0.209 | (yours) | RViz only |
 | Jetson (perception) | 10.68.0.206 | pal | traffic_object_detection + vehicle_plate_detection_fastalpr |
-| Jetson (drone) | 10.68.0.208 | tiago-jetson | drone_traffic_perception + GPS/IMU (data storage only) |
+| Jetson (drone) | 10.68.0.208 | tiago-jetson | drone_traffic_perception + IMU (data storage only) + robot_audio |
 
 Passwords aren't recorded here — see the team's own credentials reference
 for these machines.
@@ -138,11 +138,19 @@ both publish `map → odom` and will fight each other if both are up.
 scp src/system_test/run_robot.sh pal@10.68.0.1:~/
 ssh pal@10.68.0.1 './run_robot.sh'
 ```
-Brings up: velodyne → scan_matcher → AMCL (using the map from Phase 1) →
-base_navigation → PAL's own base-laser bringup + base_scan_proximity →
-school_traffic_control → benchmark_logging. Comment out the
-base-laser/base_scan_proximity block or the benchmark_logging line inside
-the script first if you don't need either for this particular test.
+Brings up: GPS (RTK/NTRIP, SAPOS BW) → velodyne → scan_matcher → AMCL (using
+the map from Phase 1) → base_navigation → PAL's own base-laser bringup +
+base_scan_proximity → school_traffic_control → benchmark_logging. Comment
+out the base-laser/base_scan_proximity block or the benchmark_logging line
+inside the script first if you don't need either for this particular test.
+
+GPS runs here via `sparkfun_rtk_gps_bringup`'s `gps_rtk.launch.py`, using
+PAL's apt-packaged `ros-humble-ublox-gps`/`ros-humble-ntrip-client` (not
+built from source — the arm64 build on the drone Jetson turned out to have
+a broken dependency, so apt-vs-source isn't interchangeable across
+architectures; this robot's amd64 apt build works fine). Fill in
+`config/ntrip_credentials.yaml` under the package share directory before
+first launch if you haven't already. Verify with `ros2 topic echo /fix`.
 
 Note: `robot_audio` does **not** run here — it runs on the drone jetson
 (10.68.0.208, see 2.5), since that's where the external speaker is
@@ -222,9 +230,10 @@ scp src/system_test/run_jetson_drone_208.sh tiago-jetson@10.68.0.208:~/
 ssh tiago-jetson@10.68.0.208     # log in interactively
 ./run_jetson_drone_208.sh
 ```
-Brings up GPS + IMU (data storage only, not consumed by the state machine
-yet), `robot_audio` (this machine has the external speaker), and the
-drone/VisDrone perception over RTMP. The script auto-detects the USB audio
+Brings up IMU (data storage only, not consumed by the state machine yet),
+`robot_audio` (this machine has the external speaker), and the
+drone/VisDrone perception over RTMP. GPS runs on the robot instead (see
+2.1), not here. The script auto-detects the USB audio
 sink and sets it as PulseAudio's default before launching `robot_audio` —
 the onboard/built-in sink on this Jetson is a non-functional stub (see this
 session's audio troubleshooting notes). Verify with:

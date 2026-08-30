@@ -1,11 +1,21 @@
 #!/bin/bash
 # Bringup on jetson 10.68.0.208 (user tiago-jetson): drone perception
-# (VisDrone/YOLO over the RTMP feed), GPS and IMU (data-storage only right
-# now — not consumed by the state machine), and robot_audio — this machine
-# is where the external speaker is physically connected, not the robot
+# (VisDrone/YOLO over the RTMP feed), IMU (data-storage only right now —
+# not consumed by the state machine), and robot_audio — this machine is
+# where the external speaker is physically connected, not the robot
 # itself. school_traffic_control (running on the robot) reaches
 # robot_audio's play_audio action server fine over the network, same
 # ROS_DOMAIN_ID.
+#
+# GPS no longer runs here — it moved to the robot (10.68.0.1), see
+# run_robot.sh. This machine's ublox_gps was built from source
+# (github.com/KumarRobotics/ublox.git, v3.0.0) and worked, but used
+# private (~/fix) topics instead of the /fix every consumer expects; when
+# we tried switching to the apt package here to match the robot/dev setup,
+# the arm64 build of ros-humble-ublox-gps turned out to have a broken
+# dependency (linked against a diagnostic_updater ABI with no .so in the
+# currently archived version), so apt isn't viable here either. GPS was
+# moved to the robot instead of fighting that.
 #
 # Adjust ROS2_WS below if this Jetson's workspace isn't at ~/ros2_ws.
 #
@@ -36,11 +46,6 @@ launch_bg() {
   disown
   echo "started $name (pid $!) -> $LOGDIR/$name.log"
 }
-
-echo "=== GPS (SparkFun ZED-F9P, no RTK corrections — data storage only) ==="
-launch_bg gps ros2 launch sparkfun_rtk_gps_bringup gps_only.launch.py
-
-sleep 2
 
 echo "=== IMU (Xsens MTi — data storage only) ==="
 launch_bg imu ros2 launch xsens_mti_imu_bringup xsens_mti_imu_bringup.launch.py

@@ -1,8 +1,9 @@
 #!/bin/bash
 # Opens a LOCAL tmux session (on this dev computer) with one window per
-# program normally launched by run_jetson_drone_208.sh -- GPS, IMU,
-# robot_audio, drone perception -- each SSH'd into jetson 10.68.0.208 and
-# running in the FOREGROUND, not nohup'd/disowned.
+# program normally launched by run_jetson_drone_208.sh -- IMU, robot_audio,
+# drone perception -- each SSH'd into jetson 10.68.0.208 and running in the
+# FOREGROUND, not nohup'd/disowned. GPS no longer runs on this machine, see
+# run_jetson_drone_208.sh -- it moved to the robot (10.68.0.1).
 #
 # This is a live-view/debug tool, not the persistent deployment path:
 #   - You see each program's real output directly in its own window.
@@ -35,10 +36,7 @@ fi
 # gets sourced -- a plain `ssh host 'command'` does NOT source .bashrc,
 # which silently breaks cross-machine DDS discovery (hit this earlier).
 
-tmux new-session -d -s "$SESSION" -n gps \
-  "ssh -t -o StrictHostKeyChecking=accept-new $HOST 'bash -lc \"source /opt/ros/humble/setup.bash && source /home/tiago-jetson/ros2_ws/install/setup.bash && export ROS_DOMAIN_ID=2 && ros2 launch sparkfun_rtk_gps_bringup gps_only.launch.py\"'"
-
-tmux new-window -t "$SESSION" -n imu \
+tmux new-session -d -s "$SESSION" -n imu \
   "ssh -t -o StrictHostKeyChecking=accept-new $HOST 'bash -lc \"source /opt/ros/humble/setup.bash && source /home/tiago-jetson/ros2_ws/install/setup.bash && export ROS_DOMAIN_ID=2 && ros2 launch xsens_mti_imu_bringup xsens_mti_imu_bringup.launch.py\"'"
 
 # No USB-sink detection needed here -- the persistent PulseAudio drop-in
@@ -50,5 +48,5 @@ tmux new-window -t "$SESSION" -n robot_audio \
 tmux new-window -t "$SESSION" -n drone_perception \
   "ssh -t -o StrictHostKeyChecking=accept-new $HOST 'bash -lc \"source /opt/ros/humble/setup.bash && source /home/tiago-jetson/ros2_ws/install/setup.bash && source ~/visdrone_deployment/venv/bin/activate && export ROS_DOMAIN_ID=2 && cd /home/tiago-jetson/ros2_ws/src/outdoor_social_robot/perception/drone_traffic_perception && python main.py\"'"
 
-tmux select-window -t "$SESSION:gps"
+tmux select-window -t "$SESSION:imu"
 exec tmux attach -t "$SESSION"

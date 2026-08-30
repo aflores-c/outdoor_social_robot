@@ -32,6 +32,14 @@ launch_bg() {
   echo "started $name (pid $!) -> $LOGDIR/$name.log"
 }
 
+echo "=== GPS (SparkFun ZED-F9P + RTK/NTRIP corrections, SAPOS BW) ==="
+echo "    ublox_gps/ntrip_client come from PAL's apt repo here (ros-humble-*),"
+echo "    not built from source — fill in config/ntrip_credentials.yaml"
+echo "    before launching if you haven't already."
+launch_bg gps ros2 launch sparkfun_rtk_gps_bringup gps_rtk.launch.py
+
+sleep 2
+
 echo "=== Localization + navigation ==="
 launch_bg velodyne        ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py
 sleep 3
@@ -62,3 +70,4 @@ echo
 echo "All nodes launched. Check logs in $LOGDIR/"
 echo "Next: set the initial pose in RViz on the dev computer (10.68.0.209),"
 echo "then drive the robot until localization converges (see docs/system_test.md)."
+echo "Verify GPS with: ros2 topic echo /fix"
