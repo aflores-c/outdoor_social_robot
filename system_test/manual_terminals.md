@@ -44,7 +44,7 @@ ros2 launch scan_matcher_bringup scan_matcher.launch.py
 
 **4. AMCL** (needs scan_matcher up first)
 ```bash
-ros2 launch amcl_2d_localization amcl_localization.launch.py
+ros2 launch amcl_2d_localization amcl_localization.launch.py map_name:=my_map
 ```
 
 **5. Base navigation**

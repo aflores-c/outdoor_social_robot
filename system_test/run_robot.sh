@@ -45,7 +45,7 @@ launch_bg velodyne        ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.lau
 sleep 3
 launch_bg scan_matcher    ros2 launch scan_matcher_bringup scan_matcher.launch.py
 sleep 2
-launch_bg amcl            ros2 launch amcl_2d_localization amcl_localization.launch.py
+launch_bg amcl            ros2 launch amcl_2d_localization amcl_localization.launch.py map_name:=my_map
 sleep 2
 launch_bg base_navigation ros2 launch base_navigation nav2_navigation.launch.py
 
