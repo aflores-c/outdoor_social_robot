@@ -42,10 +42,25 @@ def generate_launch_description():
                      '-- keep the two in sync.'
     )
 
+    ring_arg = DeclareLaunchArgument(
+        'ring',
+        default_value='-1',
+        description="Which VLP-32C laser ring velodyne_laserscan_node flattens into the 2D "
+                     'scan_topic. Package default (see '
+                     'velodyne_laserscan/config/default-velodyne_laserscan_node-params.yaml) is '
+                     '-1 (auto-select), which is what was producing a ring aimed too high during '
+                     'mapping. Ring index is the raw VLP-32C laser_id (0-31, see '
+                     'velodyne_pointcloud/params/VeloView-VLP-32C.yaml vert_correction per '
+                     'laser_id) -- laser_id is NOT sorted by elevation angle, so picking a lower '
+                     'ring number here is not guaranteed to aim lower. Tune by watching '
+                     '/scan_outdoor in RViz while passing ring:=<N> until the beam sits level.'
+    )
+
     device_ip = LaunchConfiguration('device_ip')
     frame_id = LaunchConfiguration('frame_id')
     scan_topic = LaunchConfiguration('scan_topic')
     max_range = LaunchConfiguration('max_range')
+    ring = LaunchConfiguration('ring')
 
     # -------------------------
     # Velodyne Driver
@@ -122,7 +137,10 @@ def generate_launch_description():
         package='velodyne_laserscan',
         executable='velodyne_laserscan_node',
         output='screen',
-        parameters=[laserscan_params],
+        parameters=[
+            laserscan_params,
+            {'ring': ring}
+        ],
         remappings=[
             ('scan', 'scan_outdoor_raw')   # unclamped range_max — see scan_range_clamp_node below
         ]
@@ -176,6 +194,7 @@ def generate_launch_description():
         frame_id_arg,
         scan_topic_arg,
         max_range_arg,
+        ring_arg,
         velodyne_driver_node,
         velodyne_transform_node,
         velodyne_laserscan_node,
