@@ -29,6 +29,14 @@ def generate_launch_description():
         executable='ublox_gps_node',
         name='ublox_gps',
         output='screen',
+        # Some ublox_gps builds publish fix/fix_velocity as private (~/) topics
+        # (i.e. /ublox_gps/fix) instead of the absolute /fix that ntrip_client
+        # and every downstream consumer in this repo expect. Remapping here is
+        # a no-op on builds that already publish /fix directly.
+        remappings=[
+            ('~/fix', '/fix'),
+            ('~/fix_velocity', '/fix_velocity'),
+        ],
         parameters=[{
             # by-id, not the raw /dev/ttyACM0 -- see gps_only.launch.py's
             # comment on the same line, same reasoning applies here.
