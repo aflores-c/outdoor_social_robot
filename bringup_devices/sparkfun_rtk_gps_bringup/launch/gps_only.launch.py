@@ -18,7 +18,11 @@ def generate_launch_description():
             name='ublox_gps',
             output='screen',
             parameters=[{
-                'device': '/dev/ttyACM0',
+                # by-id, not the raw /dev/ttyACM0 -- that node number isn't
+                # stable across replugs (its USB bus device number has
+                # already shifted between plug cycles) and would silently
+                # break if another ACM-class device is ever added.
+                'device': '/dev/serial/by-id/usb-u-blox_AG_-_www.u-blox.com_u-blox_GNSS_receiver-if00',
                 'frame_id': 'gps',
                 'baudrate': 115200,
                 'ublox_topic_diagnostics': False,

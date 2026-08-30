@@ -30,7 +30,9 @@ def generate_launch_description():
         name='ublox_gps',
         output='screen',
         parameters=[{
-            'device': '/dev/ttyACM0',
+            # by-id, not the raw /dev/ttyACM0 -- see gps_only.launch.py's
+            # comment on the same line, same reasoning applies here.
+            'device': '/dev/serial/by-id/usb-u-blox_AG_-_www.u-blox.com_u-blox_GNSS_receiver-if00',
             'frame_id': 'gps',
             'baudrate': 115200,
             'ublox_topic_diagnostics': False,
