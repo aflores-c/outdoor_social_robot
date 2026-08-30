@@ -54,7 +54,7 @@ school_traffic_control_node:
     # A vehicle triggers the stop gesture once its distance falls in this
     # close range [range_near_m, range_far_m] meters, for the whole
     # crossing interaction.
-    range_near_m: 3.0
+    range_near_m: 5.0
     range_far_m: 10.0
 
     # CHECK_PLATE: give up waiting for a registered-plate confirmation
@@ -78,7 +78,10 @@ school_traffic_control_node:
     # motion-driving task. In MIDDLE_IDLE, pedestrian_introduction_message
     # plays instead of the plain alert; once a vehicle is being handled, we
     # focus on vehicles and fall back to pedestrian_alert_message.
-    pedestrian_alert_range_m: 5.0
+    # Matches range_far_m above — pedestrians only get a single max-range
+    # threshold (no near bound like vehicles' range_near_m/range_far_m
+    # window), so this is set to the same far bound.
+    pedestrian_alert_range_m: 10.0
     pedestrian_alert_message: "safe_audio.mp3"
     pedestrian_introduction_message: "presentation_audio.mp3"
     pedestrian_alert_cooldown_s: 5.0

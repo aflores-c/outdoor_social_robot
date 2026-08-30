@@ -206,6 +206,58 @@ walkthrough of `start_trial`/`stop_trial`).
 
 ---
 
+## Debugging perception
+
+Topics to check per perception node when something isn't showing up in
+`school_traffic_control`. A topic appearing in `ros2 topic list` only means
+it's been declared — it doesn't mean data is flowing; check `ros2 topic hz`
+or `echo` to confirm messages are actually arriving. Both detection nodes
+default to their `enabled_topic` being off at rest — `school_traffic_control`
+toggles them; force it manually (see the Forcing signals table below) to
+test either node standalone.
+
+**`traffic_object_detection`** (jetson 10.68.0.206, `yolo_ros` venv):
+
+| Topic | Type | Notes |
+|---|---|---|
+| `/perception/traffic_object_detection_enabled` | `std_msgs/Bool` | Gate — node stays idle until `true` |
+| `/head_front_camera/color/image_raw/compressed` | `sensor_msgs/CompressedImage` | Input image |
+| `/head_front_camera/color/camera_info` | `sensor_msgs/CameraInfo` | Input |
+| `/velodyne_points` | `sensor_msgs/PointCloud2` | Input, for 3D pose extraction |
+| TF `head_front_camera_color_optical_frame` → `velodyne` | — | Read live every frame; a broken TF chain silently kills pose extraction. Check with `ros2 run tf2_ros tf2_echo velodyne head_front_camera_color_optical_frame` |
+| `/perception/vehicles` | `traffic_perception_msgs/msg/VehicleDetectionArray` | Output, consumed by `school_traffic_control` |
+| `/perception/pedestrians` | `traffic_perception_msgs/msg/PedestrianDetectionArray` | Output, consumed by `school_traffic_control` |
+| `/traffic_object_detection/debug_image` | `sensor_msgs/Image` | Annotated boxes + LiDAR overlay (`rqt_image_view`), throttled to `debug_fps` |
+| `/traffic_object_detection/vehicles/poses`, `/pedestrians/poses` | `geometry_msgs/PoseArray` | 3D poses, viewable in RViz |
+| `/traffic_object_detection/vehicles/markers`, `/pedestrians/markers` | `visualization_msgs/MarkerArray` | RViz markers |
+
+If `debug_image` shows correct boxes but `/perception/vehicles`/`pedestrians`
+stay empty, the issue is downstream — the LiDAR-point-count gate
+(`*_min_lidar_points`) or the TF lookup, not YOLO itself.
+
+**`vehicle_plate_detection_fastalpr`** (jetson 10.68.0.206, `plate_detection_fastalpr` venv):
+
+| Topic | Type | Notes |
+|---|---|---|
+| `/perception/plate_detection_enabled` | `std_msgs/Bool` (TRANSIENT_LOCAL) | Gate — node stays idle until `true` |
+| `/head_front_camera/color/image_raw/compressed` | `sensor_msgs/CompressedImage` | Input image |
+| `/perception/plate_allowed` | `std_msgs/Bool` | Output — true if any visible plate matches the allow-list; consumed by `school_traffic_control` |
+| `/perception/plate_result` | `traffic_perception_msgs/msg/PlateResult` | Output — one message per detected plate box (`plate_text`, `det_confidence`, `ocr_confidence`, `authorized`) |
+| `/vehicle_plate_detection_fastalpr/last_plate` | `std_msgs/String` | Most recent OCR'd plate text |
+| `/vehicle_plate_detection_fastalpr/debug_image` | `sensor_msgs/Image` | Annotated debug image (`rqt_image_view`), throttled to `debug_fps` |
+
+If `plate_allowed` never goes `true`, check `config/registered_plates.yaml`
+isn't empty — the node logs a startup warning and rejects every plate if so.
+
+Sanity sequence for either node:
+```bash
+ros2 topic pub --once <enabled_topic> std_msgs/msg/Bool "{data: true}"
+ros2 topic hz <output_topic>
+ros2 run rqt_image_view rqt_image_view   # pick the debug_image topic
+```
+
+---
+
 ## Forcing signals — driving the state machine manually
 
 For bench/dry testing without live perception hardware running, every
@@ -227,15 +279,17 @@ matched yet (hit this once this session); prefer a short repeated burst
 
 | Signal | Topic | Type | Forces |
 |---|---|---|---|
-| Vehicle in range | `/perception/vehicles` | `traffic_perception_msgs/msg/VehicleDetectionArray` | MIDDLE_IDLE → VEHICLE_STOP, for any vehicle with `range_near_m ≤ distance ≤ range_far_m` (default 3-10m) |
+| Vehicle in range | `/perception/vehicles` | `traffic_perception_msgs/msg/VehicleDetectionArray` | MIDDLE_IDLE → VEHICLE_STOP, for any vehicle with `range_near_m ≤ distance ≤ range_far_m` (default 5-10m) |
 | Vehicle stopped | same topic, `stopped: true` on the closest in-range vehicle | — | VEHICLE_STOP → CHECK_PLATE |
 | Second vehicle queued | same array, 2 entries with **distinct `id`** both in range | — | Sets `_had_second_vehicle` (changes RETURNING's gesture to `motion_stop` instead of `motion_arms_init`) — **currently dormant on the real system**: the live perception stack always publishes `id: -1` (no persistent tracking), so this only exercises via a hand-crafted test array, not real hardware |
 | Plate vote | `/perception/plate_allowed` | `std_msgs/Bool` | CHECK_PLATE → CROSS_VEHICLE once ≥ `plate_vote_min_yes` (2) of the last `plate_vote_window` (5) readings are `true` |
 | Force-authorize plate | `/perception/force_plate_allowed` | `std_msgs/Bool` | CHECK_PLATE → CROSS_VEHICLE immediately, bypassing the vote — **one-shot**, auto-clears after authorizing a single vehicle |
-| Pedestrian detected | `/perception/pedestrians` | `traffic_perception_msgs/msg/PedestrianDetectionArray` | Plays `pedestrian_introduction_message` (if currently MIDDLE_IDLE) or `pedestrian_alert_message` (any other state) when within `pedestrian_alert_range_m` (5m) — audio only, never changes motion/state |
+| Pedestrian detected | `/perception/pedestrians` | `traffic_perception_msgs/msg/PedestrianDetectionArray` | Plays `pedestrian_introduction_message` (if currently MIDDLE_IDLE) or `pedestrian_alert_message` (any other state) when within `pedestrian_alert_range_m` (10m — matches vehicles' `range_far_m`, pedestrians have no near bound) — audio only, never changes motion/state |
 | Close proximity (base scan) | `/perception/close_proximity` | `std_msgs/Bool` | Same pedestrian-alert effect as above, OR'd with the camera/lidar check |
 | Drone parking counts | `drone_vehicle_detections` | `drone_traffic_perception/msg/VehicleDetectionCounts` | Chooses `go_to_sfo_audio.mp3` vs `stop_audio.mp3` in WAIT_TO_LEAVE — statistical mode of `raw_detections` over the trailing `parking_count_window_s` (1s), compared against `parking_free_threshold` (12) |
 | Emergency | `/school_traffic_control/emergency` | `std_msgs/Bool` | Any state → EMERGENCY (cancels in-flight nav/motion goals, holds for teleop); `false` → back to MIDDLE_IDLE |
+| Switch to plate perception | `/perception/plate_detection_enabled` | `std_msgs/Bool` (TRANSIENT_LOCAL) | Turns `vehicle_plate_detection_fastalpr` on/off directly — `school_traffic_control` normally drives this itself (on only during CHECK_PLATE), force it to test the plate node standalone without going through the state machine |
+| Switch to car/pedestrian perception | `/perception/traffic_object_detection_enabled` | `std_msgs/Bool` (TRANSIENT_LOCAL) | Turns `traffic_object_detection` on/off directly — same idea, for testing vehicle/pedestrian detection standalone. `school_traffic_control` keeps this on through VEHICLE_STOP and only swaps to plate perception during CHECK_PLATE, so the two are normally mutually exclusive |
 
 ### Example commands
 
@@ -252,6 +306,12 @@ ros2 topic pub -r 10 /perception/vehicles traffic_perception_msgs/msg/VehicleDet
 Force-authorize the plate (skips CHECK_PLATE's vote/timeout):
 ```bash
 ros2 topic pub -r 10 /perception/force_plate_allowed std_msgs/msg/Bool "{data: true}"
+```
+Switch perception modes by hand (bypasses `school_traffic_control`'s own
+switching, for testing either detection node standalone):
+```bash
+ros2 topic pub --once /perception/plate_detection_enabled std_msgs/msg/Bool "{data: true}"
+ros2 topic pub --once /perception/traffic_object_detection_enabled std_msgs/msg/Bool "{data: false}"
 ```
 Trigger EMERGENCY, then clear it once you've confirmed `state=EMERGENCY` in
 the log:

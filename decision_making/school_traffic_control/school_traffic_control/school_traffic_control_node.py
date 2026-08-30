@@ -4,7 +4,7 @@ School traffic control decision node.
 
 Acts as a crossing-guard state machine: the robot base holds a "middle of
 the road" pose while no vehicle needs attention. When a vehicle enters the
-close range (range_near_m..range_far_m, default 3-5 m), the robot holds
+close range (range_near_m..range_far_m, default 5-10 m), the robot holds
 position and makes a stop gesture while watching for the vehicle to
 actually come to a stop (VehicleDetection.stopped, from
 traffic_object_detection). Once stopped, the robot looks down at the plate
@@ -162,8 +162,8 @@ class SchoolTrafficControlNode(Node):
 
         # Vehicle is "in range" (close range) for the whole crossing
         # interaction between these two distances [m] (near, far).
-        self.declare_parameter('range_near_m', 3.0)
-        self.declare_parameter('range_far_m', 5.0)
+        self.declare_parameter('range_near_m', 5.0)
+        self.declare_parameter('range_far_m', 10.0)
 
         # Debounce for the vehicle actually leaving range: target_vehicle
         # must read as absent continuously for this long before
@@ -197,7 +197,7 @@ class SchoolTrafficControlNode(Node):
         # pedestrian_introduction_message plays instead of the plain alert
         # (see _maybe_alert_pedestrian) — once a vehicle is being handled, we
         # focus on vehicles and fall back to the plain caution clip.
-        self.declare_parameter('pedestrian_alert_range_m', 5.0)
+        self.declare_parameter('pedestrian_alert_range_m', 10.0)
         self.declare_parameter('pedestrian_alert_message', 'safe_audio.mp3')
         self.declare_parameter('pedestrian_introduction_message', 'presentation_audio.mp3')
         self.declare_parameter('pedestrian_alert_cooldown_s', 5.0)
