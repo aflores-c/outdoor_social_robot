@@ -123,6 +123,24 @@ robot_audio → school_traffic_control → benchmark_logging. Comment out the
 base-laser/base_scan_proximity block or the benchmark_logging line inside
 the script first if you don't need either for this particular test.
 
+**Base-laser prerequisite for `base_scan_proximity`** — both run **on the
+robot** (10.68.0.1), not the dev computer or either Jetson.
+`base_scan_proximity` only reads a merged/filtered `/scan` topic; it does
+nothing until PAL's own SICK front+rear bringup (`omni_base_laser_sensors`,
+not part of this git workspace) is actually publishing that topic:
+```bash
+ros2 launch omni_base_laser_sensors laser_sick-571.launch.py
+```
+`run_robot.sh` already launches this before `base_scan_proximity` in the
+right order — this is only needed standalone if you're running
+`base_scan_proximity` by itself outside the script (e.g. via `tmux`, as
+done this session). Confirm the prerequisite is actually up before blaming
+`base_scan_proximity`:
+```bash
+ros2 topic hz /scan
+ros2 topic hz /perception/close_proximity   # after starting base_scan_proximity
+```
+
 ### 2.2 RViz (10.68.0.209, dev computer)
 
 Just RViz2 — add displays for `/map`, `/amcl_pose`
@@ -346,6 +364,6 @@ confirmation instead of parsing log lines.
 | `map_server` fails to load | Map not copied into `map/`, or not rebuilt | Redo the copy + `colcon build` step in Phase 1 |
 | `tf2_echo map base_link` fails | AMCL/lifecycle_manager not active yet | Check `run_robot.sh`'s `amcl.log` for lifecycle transition errors |
 | Plate/vehicle detection never turns on | `school_traffic_control` never sees a vehicle in range | Check `range_near_m`/`range_far_m` in its config vs. actual test distance |
-| `/scan` empty, base_scan_proximity silent | PAL's `omni_base_laser_sensors` bringup not running | It's not part of this git workspace — start it explicitly (see `run_robot.sh`'s comment) |
+| `/scan` empty, base_scan_proximity silent | PAL's `omni_base_laser_sensors` bringup not running | It's not part of this git workspace — start it explicitly on the robot (see the base-laser prerequisite note in Phase 2.1) |
 | Drone topics never appear | RTMP link down, or wrong venv active | Check `drone_traffic_perception.log`; confirm `USE_RTMP`/`RTMP_URL` in `main.py` |
 | Nothing discovers across machines | `ROS_DOMAIN_ID` mismatch, or CycloneDDS `<Peers>`/`<NetworkInterface>` misconfigured for a machine's active interface | Confirm `echo $ROS_DOMAIN_ID` is `2` everywhere; check `cyclonedds.xml` peers include this machine |
