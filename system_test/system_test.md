@@ -43,7 +43,9 @@ documented per-package:
   `perception/vehicle_plate_detection_fastalpr/DEPLOYMENT.md` (venv
   `~/venvs/plate_detection_fastalpr`).
 - Jetson 10.68.0.208: `perception/drone_traffic_perception/README.md` (venv
-  `~/visdrone_deployment/venv`).
+  `~/visdrone_deployment/venv`). Also runs `robot_audio`/`robot_audio_msgs`
+  (plain `colcon build`, no venv) — this is where the external speaker is
+  physically connected, not the robot.
 - Robot 10.68.0.1: workspace already built at
   `~/outdoor_robot_ws` (`/home/pal/outdoor_robot_ws/src/outdoor_social_robot/...`).
 
@@ -119,9 +121,14 @@ ssh pal@10.68.0.1 './run_robot.sh'
 ```
 Brings up: velodyne → scan_matcher → AMCL (using the map from Phase 1) →
 base_navigation → PAL's own base-laser bringup + base_scan_proximity →
-robot_audio → school_traffic_control → benchmark_logging. Comment out the
+school_traffic_control → benchmark_logging. Comment out the
 base-laser/base_scan_proximity block or the benchmark_logging line inside
 the script first if you don't need either for this particular test.
+
+Note: `robot_audio` does **not** run here — it runs on the drone jetson
+(10.68.0.208, see 2.5), since that's where the external speaker is
+physically connected. `school_traffic_control`'s `play_audio_action` client
+reaches it fine over the network as long as `ROS_DOMAIN_ID` matches.
 
 **Base-laser prerequisite for `base_scan_proximity`** — both run **on the
 robot** (10.68.0.1), not the dev computer or either Jetson.
@@ -197,10 +204,15 @@ ssh tiago-jetson@10.68.0.208     # log in interactively
 ./run_jetson_drone_208.sh
 ```
 Brings up GPS + IMU (data storage only, not consumed by the state machine
-yet) and the drone/VisDrone perception over RTMP. Verify with:
+yet), `robot_audio` (this machine has the external speaker), and the
+drone/VisDrone perception over RTMP. The script auto-detects the USB audio
+sink and sets it as PulseAudio's default before launching `robot_audio` —
+the onboard/built-in sink on this Jetson is a non-functional stub (see this
+session's audio troubleshooting notes). Verify with:
 ```bash
 ros2 topic echo /drone_vehicle_detections
 ros2 topic echo /drone_vehicle_detections_link_status
+ros2 action send_goal /play_audio robot_audio_msgs/action/PlayAudio "{file_name: stop_audio.mp3}"
 ```
 
 ---
@@ -367,3 +379,4 @@ confirmation instead of parsing log lines.
 | `/scan` empty, base_scan_proximity silent | PAL's `omni_base_laser_sensors` bringup not running | It's not part of this git workspace — start it explicitly on the robot (see the base-laser prerequisite note in Phase 2.1) |
 | Drone topics never appear | RTMP link down, or wrong venv active | Check `drone_traffic_perception.log`; confirm `USE_RTMP`/`RTMP_URL` in `main.py` |
 | Nothing discovers across machines | `ROS_DOMAIN_ID` mismatch, or CycloneDDS `<Peers>`/`<NetworkInterface>` misconfigured for a machine's active interface | Confirm `echo $ROS_DOMAIN_ID` is `2` everywhere; check `cyclonedds.xml` peers include this machine |
+| No sound from `robot_audio` | Wrong PulseAudio default sink (onboard/built-in sink on jetson 208 is a non-functional stub, not in `aplay -l`) | `pactl list short sinks` on 10.68.0.208, `pactl set-default-sink <usb sink>`, `pactl set-sink-volume <usb sink> 100%` — `run_jetson_drone_208.sh` does this automatically now, but redo it by hand if the speaker was plugged in after the script started |

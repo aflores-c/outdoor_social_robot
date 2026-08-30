@@ -1,7 +1,11 @@
 #!/bin/bash
 # Bringup on jetson 10.68.0.208 (user tiago-jetson): drone perception
-# (VisDrone/YOLO over the RTMP feed) plus GPS and IMU, which are for
-# data-storage only right now — not consumed by the state machine.
+# (VisDrone/YOLO over the RTMP feed), GPS and IMU (data-storage only right
+# now — not consumed by the state machine), and robot_audio — this machine
+# is where the external speaker is physically connected, not the robot
+# itself. school_traffic_control (running on the robot) reaches
+# robot_audio's play_audio action server fine over the network, same
+# ROS_DOMAIN_ID.
 #
 # Adjust ROS2_WS below if this Jetson's workspace isn't at ~/ros2_ws.
 #
@@ -42,6 +46,24 @@ echo "=== IMU (Xsens MTi — data storage only) ==="
 launch_bg imu ros2 launch xsens_mti_imu_bringup xsens_mti_imu_bringup.launch.py
 
 echo
+echo "=== robot_audio (external speaker on this machine) ==="
+echo "    Defaulting PulseAudio output to the USB audio adapter -- the"
+echo "    built-in/onboard sink on this Jetson is a non-functional stub"
+echo "    not listed in 'aplay -l' (see this session's audio troubleshooting)."
+USB_SINK=$(pactl list short sinks 2>/dev/null | grep -i usb | awk '{print $2}' | head -1)
+if [ -n "$USB_SINK" ]; then
+  pactl set-default-sink "$USB_SINK"
+  pactl set-sink-volume "$USB_SINK" 100%
+  echo "    default sink -> $USB_SINK"
+else
+  echo "    WARNING: no USB audio sink found via 'pactl list short sinks'"
+  echo "    -- check the speaker is connected, robot_audio will likely be silent."
+fi
+launch_bg robot_audio ros2 launch robot_audio robot_audio.launch.py
+
+sleep 2
+
+echo
 echo "=== Drone perception (VisDrone/YOLO over RTMP) ==="
 echo "    Runs in its own venv (~/visdrone_deployment/venv), not launched via"
 echo "    'ros2 launch' — it's a plain script, see"
@@ -62,3 +84,4 @@ echo
 echo "All nodes launched. Check logs in $LOGDIR/"
 echo "Verify with: ros2 topic echo /drone_vehicle_detections"
 echo "             ros2 topic echo /drone_vehicle_detections_link_status"
+echo "             ros2 action send_goal /play_audio robot_audio_msgs/action/PlayAudio \"{file_name: stop_audio.mp3}\""

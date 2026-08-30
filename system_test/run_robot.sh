@@ -48,8 +48,10 @@ sleep 2
 launch_bg base_scan_proximity ros2 launch base_scan_proximity base_scan_proximity.launch.py
 
 echo "=== Traffic control stack ==="
-launch_bg robot_audio          ros2 launch robot_audio robot_audio.launch.py
-sleep 2
+echo "    robot_audio runs on the drone jetson (10.68.0.208), not here --"
+echo "    that's where the external speaker is connected. See"
+echo "    run_jetson_drone_208.sh. school_traffic_control's play_audio_action"
+echo "    client reaches it fine over the network (same ROS_DOMAIN_ID)."
 launch_bg school_traffic_control ros2 launch school_traffic_control school_traffic_control.launch.py
 
 echo "=== Field-trial data collection ==="
