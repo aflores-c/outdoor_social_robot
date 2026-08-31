@@ -54,7 +54,7 @@ school_traffic_control_node:
     # A vehicle triggers the stop gesture once its distance falls in this
     # close range [range_near_m, range_far_m] meters, for the whole
     # crossing interaction.
-    range_near_m: 5.0
+    range_near_m: 2.0
     range_far_m: 10.0
 
     # CHECK_PLATE: give up waiting for a registered-plate confirmation
