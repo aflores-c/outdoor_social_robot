@@ -9,7 +9,9 @@ is no separate "vehicle model". Running one detector for both, instead of
 one YOLO instance per object type, halves the GPU inference cost on the
 Jetson Orin AGX. Bicycles are counted as vehicles for the stop/pass
 decision (see BICYCLE_CLASSES) but use their own, lower LiDAR point
-threshold given their much smaller physical profile.
+threshold given their much smaller physical profile. Which detected
+classes actually count as a vehicle (vs. being dropped) is configurable
+per-deployment via the vehicle_classes parameter.
 
 Pipeline per frame:
   1. YOLO detects persons + vehicles in the RGB image → 2D bounding boxes
@@ -106,6 +108,7 @@ class TrafficObjectDetectorNode(Node):
         self.declare_parameter('pedestrian_min_lidar_points', 5)
         self.declare_parameter('vehicle_min_lidar_points',    10)
         self.declare_parameter('bicycle_min_lidar_points',    7)
+        self.declare_parameter('vehicle_classes', ['car', 'motorcycle', 'bus', 'truck', 'bicycle'])
         # "Vehicle stopped" signal: single-target continuity heuristic (the
         # closest vehicle each frame, no full multi-object tracking) — the
         # closest vehicle's distance is tracked over a rolling window and
@@ -144,6 +147,18 @@ class TrafficObjectDetectorNode(Node):
         self._min_pts_ped       = int(self.get_parameter('pedestrian_min_lidar_points').value)
         self._min_pts_veh       = int(self.get_parameter('vehicle_min_lidar_points').value)
         self._min_pts_bike      = int(self.get_parameter('bicycle_min_lidar_points').value)
+        name_to_id = {name: cls_id for cls_id, name in COCO_CLASS_NAMES.items()}
+        requested_vehicle_classes = self.get_parameter('vehicle_classes').value
+        enabled_ids = set()
+        for name in requested_vehicle_classes:
+            cls_id = name_to_id.get(name)
+            if cls_id is None or cls_id not in (VEHICLE_CLASSES + BICYCLE_CLASSES):
+                self.get_logger().warn(
+                    f"vehicle_classes: unrecognized or non-vehicle class name '{name}' — ignoring. "
+                    f"Valid options: car, motorcycle, bus, truck, bicycle.")
+                continue
+            enabled_ids.add(cls_id)
+        self._enabled_vehicle_classes = enabled_ids
         self._stopped_confirm_time        = float(self.get_parameter('stopped_confirm_time_s').value)
         self._stopped_distance_epsilon    = float(self.get_parameter('stopped_distance_epsilon_m').value)
         self._stopped_association_distance = float(self.get_parameter('stopped_association_distance_m').value)
@@ -402,7 +417,15 @@ class TrafficObjectDetectorNode(Node):
                 # (published into the same vehicles_topic/poses_veh), but
                 # get their own (lower) LiDAR point threshold below — much
                 # smaller profile than a car.
-                is_vehicle = is_bicycle or cls_id in VEHICLE_CLASSES
+                is_vehicle_class = is_bicycle or cls_id in VEHICLE_CLASSES
+                # A class YOLO can produce but that's disabled via
+                # vehicle_classes must be dropped outright here, before any
+                # LiDAR/debug-image work — NOT fall through to the
+                # pedestrian branch below, which would wrongly feed
+                # school_traffic_control's pedestrian alert logic.
+                if is_vehicle_class and cls_id not in self._enabled_vehicle_classes:
+                    continue
+                is_vehicle = is_vehicle_class
                 if is_bicycle:
                     min_pts = self._min_pts_bike
                 elif is_vehicle:

@@ -29,6 +29,12 @@ traffic_object_detector_node:
     pedestrian_min_lidar_points: 5
     vehicle_min_lidar_points:    10
     bicycle_min_lidar_points:    7
+    # Classes counted as "vehicle" for the stop/pass decision published on
+    # vehicles_topic — subset of car/motorcycle/bus/truck/bicycle (see
+    # traffic_object_detector_node.VEHICLE_CLASSES/BICYCLE_CLASSES).
+    # Anything YOLO detects outside this list is dropped, not reclassified
+    # as a pedestrian. Default (all): ["car","motorcycle","bus","truck","bicycle"]
+    vehicle_classes: ["car"]
     # Discard LiDAR returns beyond this range (metres)
     max_range_m: 20.0
 
