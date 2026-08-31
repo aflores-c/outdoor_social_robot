@@ -22,12 +22,13 @@ logic above) remains its only motion-driving task. It's also MIDDLE_IDLE
 suppressed entirely — that state's own vehicle-flow audio (enter/
 go_to_sfo/stop) is the only audio played there, and the face is left
 alone. In MIDDLE_IDLE, which clip/face plays depends on which signal
-triggered it: a classified pedestrian (camera/lidar, pedestrians_topic)
-plays pedestrian_introduction_message + a happy face, a bare
-close-proximity scan hit (close_proximity_topic, no classification) plays
-pedestrian_alert_message + an angry face instead — see
-_maybe_alert_pedestrian. The face reverts to idle_expression (neutral)
-once neither signal is active any more.
+triggered it: a bare close-proximity scan hit (close_proximity_topic, no
+classification) plays pedestrian_alert_message + an angry face, a
+classified pedestrian (camera/lidar, pedestrians_topic) plays
+pedestrian_introduction_message + a happy face instead — see
+_maybe_alert_pedestrian, which gives the close-proximity scan priority
+when both are active at once. The face reverts to idle_expression
+(neutral) once neither signal is active any more.
 
 An EMERGENCY state, forced externally via emergency_topic, preempts every
 other state: it cancels in-flight nav/motion goals and holds (for teleop)
@@ -207,11 +208,12 @@ class SchoolTrafficControlNode(Node):
         # and show a matching face — no base or arm motion is triggered by
         # this, and it's MIDDLE_IDLE-only (suppressed once a vehicle is
         # being handled — see _maybe_alert_pedestrian). Which clip/face
-        # plays depends on the triggering signal: a classified pedestrian
-        # (camera/lidar) plays pedestrian_introduction_message +
-        # pedestrian_introduction_expression; a bare close-proximity scan
-        # hit plays pedestrian_alert_message + pedestrian_alert_expression
-        # instead. Face reverts to idle_expression once neither signal is
+        # plays depends on the triggering signal: a bare close-proximity
+        # scan hit plays pedestrian_alert_message + pedestrian_alert_expression;
+        # a classified pedestrian (camera/lidar) plays
+        # pedestrian_introduction_message + pedestrian_introduction_expression
+        # instead — the scan signal takes priority if both are active at
+        # once. Face reverts to idle_expression once neither signal is
         # active any more.
         self.declare_parameter('pedestrian_alert_range_m', 10.0)
         self.declare_parameter('pedestrian_alert_message', 'safe_audio.mp3')
@@ -773,14 +775,16 @@ class SchoolTrafficControlNode(Node):
         this alert is suppressed entirely; that state's own vehicle-flow
         audio (enter/go_to_sfo/stop) is the only audio played there, and
         the face is left alone (whatever it last showed). Which clip/face
-        plays depends on which signal triggered it, not on state: a
-        classified pedestrian (camera/lidar) gets the friendlier
-        introduction clip + happy face; a bare close-proximity scan hit
-        (no classification) gets the plain caution clip + angry face. If
-        both are active at once, the classified pedestrian signal takes
-        priority. Face reverts to idle_expression once neither signal is
-        active any more (checked every tick, but _set_expression only
-        actually publishes on change)."""
+        plays depends on which signal triggered it, not on state: a bare
+        close-proximity scan hit (no classification) gets the plain
+        caution clip + angry face; a classified pedestrian (camera/lidar)
+        gets the friendlier introduction clip + happy face. If both are
+        active at once, the close-proximity scan signal takes priority —
+        it means something is physically near the robot right now, which
+        takes precedence over a merely-classified pedestrian further out.
+        Face reverts to idle_expression once neither signal is active any
+        more (checked every tick, but _set_expression only actually
+        publishes on change)."""
         if self._state != State.MIDDLE_IDLE:
             return
         # Inlined from _pedestrian_in_alert_range's two sub-checks, purely
@@ -796,14 +800,14 @@ class SchoolTrafficControlNode(Node):
         if self._last_audio_stamp is not None and (self.get_clock().now() - self._last_audio_stamp) < \
                 self._pedestrian_alert_cooldown:
             return
-        if camera_lidar:
-            message = self._pedestrian_introduction_message
-            trigger = 'pedestrian_introduction'
-            expression = self._pedestrian_introduction_expression
-        else:
+        if scan:
             message = self._pedestrian_alert_message
             trigger = 'pedestrian_alert'
             expression = self._pedestrian_alert_expression
+        else:
+            message = self._pedestrian_introduction_message
+            trigger = 'pedestrian_introduction'
+            expression = self._pedestrian_introduction_expression
         self._set_expression(expression)
         self._log_event(trigger, camera_lidar=camera_lidar, scan=scan)
         self._send_audio(message)
