@@ -3,19 +3,21 @@
 Base-scan close-proximity safety net.
 
 Watches the robot base's own 2D lidar (SICK front+rear, merged and filtered
-by PAL's omni_base_laser_sensors into /scan) — distinct from the
-roof-mounted Velodyne VLP-32C used for vehicle/pedestrian classification —
-and publishes a plain Bool: True whenever anything is within
-proximity_range_m of the base, False otherwise. No classification, no
-debouncing (school_traffic_control's own freshness check + alert cooldown
-already smooth this downstream) — just "is something very close right now".
+by PAL's omni_base_laser_sensors, then relayed to /safe_scan by this
+package's own launch file) — distinct from the roof-mounted Velodyne
+VLP-32C used for vehicle/pedestrian classification — and publishes a plain
+Bool: True whenever anything is within proximity_range_m of the base,
+False otherwise. No classification, no debouncing (school_traffic_control's
+own freshness check + alert cooldown already smooth this downstream) —
+just "is something very close right now".
 
-Requires PAL's omni_base_laser_sensors bringup (sick_tim drivers +
-ira_laser_tools merger + pal_laser_filters) to actually be running for
-/scan to exist; that bringup is not part of this git workspace.
+base_scan_proximity.launch.py brings up PAL's omni_base_laser_sensors
+(sick_tim drivers + ira_laser_tools merger + pal_laser_filters, not part of
+this git workspace) itself and relays its /scan[_front_raw|_rear_raw|_raw]
+topics under a safe_ prefix — this node only ever reads the relayed one.
 
 Inputs:
-  <scan_topic>              sensor_msgs/msg/LaserScan  (default /scan)
+  <scan_topic>              sensor_msgs/msg/LaserScan  (default /safe_scan)
 
 Outputs:
   <close_proximity_topic>   std_msgs/msg/Bool          (default
@@ -37,7 +39,7 @@ class BaseScanProximityNode(Node):
     def __init__(self):
         super().__init__('base_scan_proximity_node')
 
-        self.declare_parameter('scan_topic', '/scan')
+        self.declare_parameter('scan_topic', '/safe_scan')
         self.declare_parameter('proximity_range_m', 1.5)
         self.declare_parameter('close_proximity_topic', '/perception/close_proximity')
 

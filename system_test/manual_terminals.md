@@ -52,23 +52,26 @@ ros2 launch amcl_2d_localization amcl_localization.launch.py map_name:=my_map
 ros2 launch base_navigation nav2_navigation.launch.py
 ```
 
-**6. Base laser (SICK front+rear)** — needed by `base_scan_proximity`; skip
-if you don't need the close-proximity safety net
-```bash
-ros2 launch omni_base_laser_sensors laser_sick-571.launch.py
-```
-
-**7. Base scan proximity** (needs the base laser up first)
+**6. Base scan proximity** — brings up PAL's base laser bringup
+(`omni_base_laser_sensors`, SICK front+rear) itself now, so don't also
+launch that separately — it'd fight the same USB devices. Skip this
+terminal if you don't need the close-proximity safety net. Also disables
+`direct_laser_odometry`'s own odom TF (see the launch file's own comment)
+so it doesn't fight scan_matcher_bringup's odom TF from the Velodyne.
 ```bash
 ros2 launch base_scan_proximity base_scan_proximity.launch.py
 ```
+Use only the front laser instead of the merged front+rear scan:
+```bash
+ros2 launch base_scan_proximity base_scan_proximity.launch.py scan_topic:=/safe_scan_front_raw
+```
 
-**8. School traffic control**
+**7. School traffic control**
 ```bash
 ros2 launch school_traffic_control school_traffic_control.launch.py
 ```
 
-**9. Benchmark logging** — only if this run is for the paper's data collection
+**8. Benchmark logging** — only if this run is for the paper's data collection
 ```bash
 ros2 launch benchmark_logging benchmark_logging.launch.py
 ```

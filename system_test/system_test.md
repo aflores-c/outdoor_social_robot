@@ -139,10 +139,11 @@ scp src/system_test/run_robot.sh pal@10.68.0.1:~/
 ssh pal@10.68.0.1 './run_robot.sh'
 ```
 Brings up: GPS (RTK/NTRIP, SAPOS BW) → velodyne → scan_matcher → AMCL (using
-the map from Phase 1) → base_navigation → PAL's own base-laser bringup +
-base_scan_proximity → school_traffic_control → benchmark_logging. Comment
-out the base-laser/base_scan_proximity block or the benchmark_logging line
-inside the script first if you don't need either for this particular test.
+the map from Phase 1) → base_navigation → base_scan_proximity (which brings
+up PAL's own base-laser bringup itself, see below) → school_traffic_control
+→ benchmark_logging. Comment out the base_scan_proximity block or the
+benchmark_logging line inside the script first if you don't need either
+for this particular test.
 
 GPS runs here via `sparkfun_rtk_gps_bringup`'s `gps_rtk.launch.py`, using
 PAL's apt-packaged `ros-humble-ublox-gps`/`ros-humble-ntrip-client` (not
@@ -157,21 +158,34 @@ Note: `robot_audio` does **not** run here — it runs on the drone jetson
 physically connected. `school_traffic_control`'s `play_audio_action` client
 reaches it fine over the network as long as `ROS_DOMAIN_ID` matches.
 
-**Base-laser prerequisite for `base_scan_proximity`** — both run **on the
+**`base_scan_proximity` and PAL's base-laser bringup** — runs **on the
 robot** (10.68.0.1), not the dev computer or either Jetson.
-`base_scan_proximity` only reads a merged/filtered `/scan` topic; it does
-nothing until PAL's own SICK front+rear bringup (`omni_base_laser_sensors`,
-not part of this git workspace) is actually publishing that topic:
+`base_scan_proximity.launch.py` brings up PAL's own SICK front+rear
+bringup (`omni_base_laser_sensors`, not part of this git workspace) itself
+now, and relays its scan topics under a `safe_` prefix (`/safe_scan` =
+merged+filtered, the default `base_scan_proximity_node` reads;
+`/safe_scan_front_raw`/`/safe_scan_rear_raw` = single-laser only, pass
+`scan_topic:=/safe_scan_front_raw` etc. to use one instead of the merged
+pair) rather than editing PAL's own config, so anything else on the robot
+that might still expect the original `/scan`/`/scan_front_raw`/etc. names
+keeps working unchanged. **Don't** also launch `omni_base_laser_sensors`
+separately — both would fight the same USB laser devices.
+
+This launch also disables `omni_base_laser_sensors`' own
+`direct_laser_odometry` (PAL's `dlo_ros`) odometry broadcast — that node
+publishes `odom → base` straight from the SICK scan by default, which
+collides with `scan_matcher_bringup`'s own `odom → base` from the outdoor
+Velodyne (longer range, actually meant for outdoors). Disabled via a PAL
+user-config override at `/home/pal/.pal/config/90_disable_dlo_odom.yaml`
+(`dlo.enable_publish_odom_tf: false`, using `get_pal_configuration()`'s
+`~/.pal/config/` override mechanism from `launch_pal` — not part of this
+git workspace, re-apply if the robot is ever re-imaged). The node keeps
+running and still merges/filters scans for `base_scan_proximity`, it just
+no longer publishes odometry.
+
+Confirm it's actually up before blaming `base_scan_proximity` itself:
 ```bash
-ros2 launch omni_base_laser_sensors laser_sick-571.launch.py
-```
-`run_robot.sh` already launches this before `base_scan_proximity` in the
-right order — this is only needed standalone if you're running
-`base_scan_proximity` by itself outside the script (e.g. via `tmux`, as
-done this session). Confirm the prerequisite is actually up before blaming
-`base_scan_proximity`:
-```bash
-ros2 topic hz /scan
+ros2 topic hz /safe_scan
 ros2 topic hz /perception/close_proximity   # after starting base_scan_proximity
 ```
 
@@ -425,7 +439,7 @@ confirmation instead of parsing log lines.
 | `map_server` fails to load | Map not copied into `map/`, or not rebuilt | Redo the copy + `colcon build` step in Phase 1 |
 | `tf2_echo map base_link` fails | AMCL/lifecycle_manager not active yet | Check `run_robot.sh`'s `amcl.log` for lifecycle transition errors |
 | Plate/vehicle detection never turns on | `school_traffic_control` never sees a vehicle in range | Check `range_near_m`/`range_far_m` in its config vs. actual test distance |
-| `/scan` empty, base_scan_proximity silent | PAL's `omni_base_laser_sensors` bringup not running | It's not part of this git workspace — start it explicitly on the robot (see the base-laser prerequisite note in Phase 2.1) |
+| `/safe_scan` empty, base_scan_proximity silent | `base_scan_proximity.launch.py` not running, or its `omni_base_laser_sensors` include failed | Check the launch log for the underlying SICK driver/lifecycle errors (see Phase 2.1) |
 | Drone topics never appear | RTMP link down, or wrong venv active | Check `drone_traffic_perception.log`; confirm `USE_RTMP`/`RTMP_URL` in `main.py` |
 | Nothing discovers across machines | `ROS_DOMAIN_ID` mismatch, or CycloneDDS `<Peers>`/`<NetworkInterface>` misconfigured for a machine's active interface | Confirm `echo $ROS_DOMAIN_ID` is `2` everywhere; check `cyclonedds.xml` peers include this machine |
 | No sound from `robot_audio` | Wrong PulseAudio default sink (onboard/built-in sink on jetson 208 is a non-functional stub, not in `aplay -l`) | `pactl list short sinks` on 10.68.0.208, `pactl set-default-sink <usb sink>`, `pactl set-sink-volume <usb sink> 100%` — `run_jetson_drone_208.sh` does this automatically now, but redo it by hand if the speaker was plugged in after the script started |

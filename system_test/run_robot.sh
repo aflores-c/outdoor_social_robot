@@ -8,9 +8,14 @@
 #   - pose_a_x/y/phi_deg and pose_b_x/y/phi_deg in school_traffic_control's
 #     config yaml are already filled in (see docs/system_test.md phase 2.3) —
 #     first run of a NEW map/site will not have these yet.
-#   - PAL's own base laser bringup (omni_base_laser_sensors) is available
-#     for base_scan_proximity's /scan input — comment out that block below
-#     if you don't need the close-proximity safety net for this test.
+#   - base_scan_proximity.launch.py brings up PAL's own base laser bringup
+#     (omni_base_laser_sensors) itself now — comment out that block below
+#     if you don't need the close-proximity safety net for this test. Don't
+#     also launch omni_base_laser_sensors separately elsewhere — it'd fight
+#     the SICK lasers' USB devices with this one. That launch also disables
+#     direct_laser_odometry's odom TF (see base_scan_proximity.launch.py's
+#     own comment) so it doesn't fight scan_matcher_bringup's odom TF from
+#     the outdoor Velodyne.
 #
 # Logs land in ~/system_test_logs/*.log — tail -f any of them to check status.
 
@@ -49,10 +54,10 @@ launch_bg amcl            ros2 launch amcl_2d_localization amcl_localization.lau
 sleep 2
 launch_bg base_navigation ros2 launch base_navigation nav2_navigation.launch.py
 
-echo "=== Base 2D lidar (SICK front+rear) for base_scan_proximity ==="
-echo "    Comment this block out if not testing the close-proximity safety net."
-launch_bg omni_base_laser ros2 launch omni_base_laser_sensors laser_sick-571.launch.py
-sleep 2
+echo "=== Base 2D lidar (SICK front+rear) + close proximity safety net ==="
+echo "    base_scan_proximity.launch.py brings up omni_base_laser_sensors"
+echo "    itself now (see the file's own header comment) — comment this"
+echo "    block out if not testing the close-proximity safety net."
 launch_bg base_scan_proximity ros2 launch base_scan_proximity base_scan_proximity.launch.py
 
 echo "=== Traffic control stack ==="
