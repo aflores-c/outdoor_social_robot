@@ -258,7 +258,7 @@ class SchoolTrafficControlNode(Node):
         #self._motion_pass = self.get_parameter('motion_pass').value
         self._motion_default = "norway_init"
         self._motion_arms_init = "norway_arms_init"
-        self._motion_stop = "norway_init_stop"
+        self._motion_stop = "norway_stop"
         self._motion_right_init = "norway_right_init"
         self._motion_pass = "norway_pass"
         self._motion_pass_wave = "norway_pass_wave"
