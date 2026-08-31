@@ -139,7 +139,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             laserscan_params,
-            {'ring': ring}
+            {'ring': 1}
         ],
         remappings=[
             ('scan', 'scan_outdoor_raw')   # unclamped range_max — see scan_range_clamp_node below
