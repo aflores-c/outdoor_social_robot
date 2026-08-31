@@ -13,12 +13,21 @@ plate_confirmation_timeout_s, the robot crosses to pose B, waves the
 vehicle through, and returns. If not confirmed in time, the robot goes
 back to just holding the stop gesture until the vehicle leaves.
 
-A pedestrian within the alert range is handled separately from the state
-machine: the robot only plays an audio clip (robot_audio) and never changes
-its base pose or arm gesture because of a pedestrian — traffic control (the
-vehicle logic above) remains its only motion-driving task. In MIDDLE_IDLE it
-plays pedestrian_introduction_message; in any vehicle-focused state it plays
-the plain pedestrian_alert_message instead (see _maybe_alert_pedestrian).
+A pedestrian/close-proximity alert is handled separately from the state
+machine: the robot only plays an audio clip (robot_audio) and shows a
+matching face (interaction_skills SetExpression) and never changes its
+base pose or arm gesture because of it — traffic control (the vehicle
+logic above) remains its only motion-driving task. It's also MIDDLE_IDLE
+-only: once a vehicle is being handled (any other state), this alert is
+suppressed entirely — that state's own vehicle-flow audio (enter/
+go_to_sfo/stop) is the only audio played there, and the face is left
+alone. In MIDDLE_IDLE, which clip/face plays depends on which signal
+triggered it: a classified pedestrian (camera/lidar, pedestrians_topic)
+plays pedestrian_introduction_message + a happy face, a bare
+close-proximity scan hit (close_proximity_topic, no classification) plays
+pedestrian_alert_message + an angry face instead — see
+_maybe_alert_pedestrian. The face reverts to idle_expression (neutral)
+once neither signal is active any more.
 
 An EMERGENCY state, forced externally via emergency_topic, preempts every
 other state: it cancels in-flight nav/motion goals and holds (for teleop)
@@ -96,6 +105,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from std_msgs.msg import Bool, String
 from traffic_perception_msgs.msg import VehicleDetectionArray, PedestrianDetectionArray
 from drone_traffic_perception.msg import VehicleDetectionCounts
+from interaction_skills.msg import SetExpression
 
 from base_navigation.action import GoToXYPhi
 from play_motion2_msgs.action import PlayMotion2
@@ -134,6 +144,7 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('go_to_xy_phi_action', 'go_to_xy_phi')
         self.declare_parameter('play_motion2_action', 'play_motion2')
         self.declare_parameter('play_audio_action', 'play_audio')
+        self.declare_parameter('set_expression_topic', '/skill/set_expression')
 
         # Perception load switching: traffic_object_detection and
         # vehicle_plate_detection are both heavy YOLO models the Jetson
@@ -192,15 +203,23 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('pedestrian_safety_gate', False)
         self.declare_parameter('pedestrian_zone_m', 5.0)
 
-        # Pedestrian alert: within this range, play an audio clip — no base
-        # or arm motion is triggered by this. In MIDDLE_IDLE,
-        # pedestrian_introduction_message plays instead of the plain alert
-        # (see _maybe_alert_pedestrian) — once a vehicle is being handled, we
-        # focus on vehicles and fall back to the plain caution clip.
+        # Pedestrian/proximity alert: within this range, play an audio clip
+        # and show a matching face — no base or arm motion is triggered by
+        # this, and it's MIDDLE_IDLE-only (suppressed once a vehicle is
+        # being handled — see _maybe_alert_pedestrian). Which clip/face
+        # plays depends on the triggering signal: a classified pedestrian
+        # (camera/lidar) plays pedestrian_introduction_message +
+        # pedestrian_introduction_expression; a bare close-proximity scan
+        # hit plays pedestrian_alert_message + pedestrian_alert_expression
+        # instead. Face reverts to idle_expression once neither signal is
+        # active any more.
         self.declare_parameter('pedestrian_alert_range_m', 10.0)
         self.declare_parameter('pedestrian_alert_message', 'safe_audio.mp3')
         self.declare_parameter('pedestrian_introduction_message', 'presentation_audio.mp3')
         self.declare_parameter('pedestrian_alert_cooldown_s', 5.0)
+        self.declare_parameter('idle_expression', 'neutral')
+        self.declare_parameter('pedestrian_introduction_expression', 'happy')
+        self.declare_parameter('pedestrian_alert_expression', 'angry')
 
         # Audio clips on vehicle state transitions (robot_audio filenames).
         self.declare_parameter('vehicle_stop_message', 'stop_audio.mp3')
@@ -241,6 +260,7 @@ class SchoolTrafficControlNode(Node):
         go_to_xy_phi_action = self.get_parameter('go_to_xy_phi_action').value
         play_motion2_action = self.get_parameter('play_motion2_action').value
         play_audio_action = self.get_parameter('play_audio_action').value
+        set_expression_topic = self.get_parameter('set_expression_topic').value
 
         self._pose_a = (
             self.get_parameter('pose_a_x').value,
@@ -285,6 +305,10 @@ class SchoolTrafficControlNode(Node):
         self._pedestrian_introduction_message = self.get_parameter('pedestrian_introduction_message').value
         self._pedestrian_alert_cooldown = Duration(
             seconds=float(self.get_parameter('pedestrian_alert_cooldown_s').value))
+        self._idle_expression = self.get_parameter('idle_expression').value
+        self._pedestrian_introduction_expression = self.get_parameter(
+            'pedestrian_introduction_expression').value
+        self._pedestrian_alert_expression = self.get_parameter('pedestrian_alert_expression').value
 
         self._vehicle_stop_message = self.get_parameter('vehicle_stop_message').value
         self._vehicle_pass_message = self.get_parameter('vehicle_pass_message').value
@@ -369,6 +393,9 @@ class SchoolTrafficControlNode(Node):
         # published unconditionally; this node doesn't know or care whether
         # a trial is currently active, that's data_logger_node's job.
         self._pub_benchmark_events = self.create_publisher(String, benchmark_events_topic, 10)
+
+        self._pub_expression = self.create_publisher(SetExpression, set_expression_topic, 10)
+        self._current_expression = None
 
         # ── Action clients ───────────────────────────────────────────────
         self._nav_client = ActionClient(self, GoToXYPhi, go_to_xy_phi_action)
@@ -740,11 +767,22 @@ class SchoolTrafficControlNode(Node):
             self._maybe_dispatch_pending_motion()
 
     def _maybe_alert_pedestrian(self):
-        """Play a warning/introduction clip when a pedestrian is close.
-        Never touches motion. In MIDDLE_IDLE plays the friendlier
-        introduction clip; once a vehicle is being handled (any other
-        state), falls back to the plain caution clip — "when a vehicle
-        approaches, we focus on vehicles"."""
+        """Play a warning/introduction clip + matching face when a
+        pedestrian is close. Never touches motion, and only active in
+        MIDDLE_IDLE — once a vehicle is being handled (any other state),
+        this alert is suppressed entirely; that state's own vehicle-flow
+        audio (enter/go_to_sfo/stop) is the only audio played there, and
+        the face is left alone (whatever it last showed). Which clip/face
+        plays depends on which signal triggered it, not on state: a
+        classified pedestrian (camera/lidar) gets the friendlier
+        introduction clip + happy face; a bare close-proximity scan hit
+        (no classification) gets the plain caution clip + angry face. If
+        both are active at once, the classified pedestrian signal takes
+        priority. Face reverts to idle_expression once neither signal is
+        active any more (checked every tick, but _set_expression only
+        actually publishes on change)."""
+        if self._state != State.MIDDLE_IDLE:
+            return
         # Inlined from _pedestrian_in_alert_range's two sub-checks, purely
         # so the triggering source can be logged — doesn't change that
         # method's own return contract.
@@ -753,16 +791,20 @@ class SchoolTrafficControlNode(Node):
             and any(p.distance <= self._pedestrian_alert_range for p in self._pedestrians))
         scan = self._close_proximity and self._is_fresh(self._close_proximity_stamp)
         if not (camera_lidar or scan):
+            self._set_expression(self._idle_expression)
             return
         if self._last_audio_stamp is not None and (self.get_clock().now() - self._last_audio_stamp) < \
                 self._pedestrian_alert_cooldown:
             return
-        if self._state == State.MIDDLE_IDLE:
+        if camera_lidar:
             message = self._pedestrian_introduction_message
             trigger = 'pedestrian_introduction'
+            expression = self._pedestrian_introduction_expression
         else:
             message = self._pedestrian_alert_message
             trigger = 'pedestrian_alert'
+            expression = self._pedestrian_alert_expression
+        self._set_expression(expression)
         self._log_event(trigger, camera_lidar=camera_lidar, scan=scan)
         self._send_audio(message)
 
@@ -982,6 +1024,21 @@ class SchoolTrafficControlNode(Node):
         self._motion_pending = None
         if request_id == self._motion_request_id:
             self._dispatch_motion(motion_name, request_id)
+
+    def _set_expression(self, expression: str):
+        """Publish a face expression, but only on actual change — this is
+        polled every control tick (see _maybe_alert_pedestrian's idle
+        revert), so an edge-triggered publish avoids spamming the topic
+        every tick for no reason. No cooldown/in-flight gating like audio
+        needs — it's a single non-blocking topic publish, not an action."""
+        if expression == self._current_expression:
+            return
+        self._current_expression = expression
+        msg = SetExpression()
+        msg.meta.caller = 'school_traffic_control_node'
+        msg.meta.priority = msg.meta.NORMAL_PRIORITY
+        msg.expression.expression = expression
+        self._pub_expression.publish(msg)
 
     def _send_audio(self, file_name: str):
         if self._audio_in_flight:

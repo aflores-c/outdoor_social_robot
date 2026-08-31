@@ -46,7 +46,7 @@ launch_bg gps ros2 launch sparkfun_rtk_gps_bringup gps_rtk.launch.py
 sleep 2
 
 echo "=== Localization + navigation ==="
-launch_bg velodyne        ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py
+launch_bg velodyne        ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py ring:=2
 sleep 3
 launch_bg scan_matcher    ros2 launch scan_matcher_bringup scan_matcher.launch.py
 sleep 2

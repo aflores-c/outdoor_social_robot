@@ -34,7 +34,7 @@ ros2 launch sparkfun_rtk_gps_bringup gps_rtk.launch.py
 
 **2. Velodyne**
 ```bash
-ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py
+ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py ring:=2
 ```
 
 **3. Scan matcher** (needs velodyne up first)

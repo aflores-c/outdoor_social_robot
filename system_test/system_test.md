@@ -90,7 +90,7 @@ export ROS_DOMAIN_ID=2
 source /opt/pal/alum/setup.bash
 source ~/outdoor_robot_ws/install/setup.bash
 
-ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py &
+ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py ring:=2 &
 sleep 3
 ros2 launch scan_matcher_bringup scan_matcher.launch.py &
 sleep 2
@@ -364,8 +364,8 @@ matched yet (hit this once this session); prefer a short repeated burst
 | Second vehicle queued | same array, 2 entries with **distinct `id`** both in range | — | Sets `_had_second_vehicle` (changes RETURNING's gesture to `motion_stop` instead of `motion_arms_init`) — **currently dormant on the real system**: the live perception stack always publishes `id: -1` (no persistent tracking), so this only exercises via a hand-crafted test array, not real hardware |
 | Plate vote | `/perception/plate_allowed` | `std_msgs/Bool` | CHECK_PLATE → CROSS_VEHICLE once ≥ `plate_vote_min_yes` (2) of the last `plate_vote_window` (5) readings are `true` |
 | Force-authorize plate | `/perception/force_plate_allowed` | `std_msgs/Bool` | CHECK_PLATE → CROSS_VEHICLE immediately, bypassing the vote — **one-shot**, auto-clears after authorizing a single vehicle |
-| Pedestrian detected | `/perception/pedestrians` | `traffic_perception_msgs/msg/PedestrianDetectionArray` | Plays `pedestrian_introduction_message` (if currently MIDDLE_IDLE) or `pedestrian_alert_message` (any other state) when within `pedestrian_alert_range_m` (10m — matches vehicles' `range_far_m`, pedestrians have no near bound) — audio only, never changes motion/state |
-| Close proximity (base scan) | `/perception/close_proximity` | `std_msgs/Bool` | Same pedestrian-alert effect as above, OR'd with the camera/lidar check |
+| Pedestrian detected | `/perception/pedestrians` | `traffic_perception_msgs/msg/PedestrianDetectionArray` | MIDDLE_IDLE only (suppressed in any other state): plays `pedestrian_introduction_message` + `pedestrian_introduction_expression` (happy face) when within `pedestrian_alert_range_m` (10m — matches vehicles' `range_far_m`, pedestrians have no near bound) — audio/face only, never changes motion/state |
+| Close proximity (base scan) | `/perception/close_proximity` | `std_msgs/Bool` | MIDDLE_IDLE only (suppressed in any other state): plays `pedestrian_alert_message` + `pedestrian_alert_expression` (angry face) instead of the introduction clip/face — same range/motion behavior as above, distinguished from a classified pedestrian purely by which topic triggered it. Face reverts to `idle_expression` (neutral) once neither signal is active |
 | Drone parking counts | `drone_vehicle_detections` | `drone_traffic_perception/msg/VehicleDetectionCounts` | Chooses `go_to_sfo_audio.mp3` vs `stop_audio.mp3` in WAIT_TO_LEAVE — statistical mode of `raw_detections` over the trailing `parking_count_window_s` (1s), compared against `parking_free_threshold` (12) |
 | Emergency | `/school_traffic_control/emergency` | `std_msgs/Bool` | Any state → EMERGENCY (cancels in-flight nav/motion goals, holds for teleop); `false` → back to MIDDLE_IDLE |
 | Switch to plate perception | `/perception/plate_detection_enabled` | `std_msgs/Bool` (TRANSIENT_LOCAL) | Turns `vehicle_plate_detection_fastalpr` on/off directly — `school_traffic_control` normally drives this itself (on only during CHECK_PLATE), force it to test the plate node standalone without going through the state machine |
@@ -388,15 +388,16 @@ Force-authorize the plate (skips CHECK_PLATE's vote/timeout):
 ros2 topic pub -r 10 /perception/force_plate_allowed std_msgs/msg/Bool "{data: true}"
 ```
 Force a pedestrian within alert range (`pedestrian_alert_range_m`, default
-10m — plays `pedestrian_introduction_message` or `pedestrian_alert_message`
-depending on current state, audio only):
+10m — MIDDLE_IDLE only, plays `pedestrian_introduction_message`
+= presentation_audio.mp3):
 ```bash
 ros2 topic pub -r 10 /perception/pedestrians traffic_perception_msgs/msg/PedestrianDetectionArray \
   "{pedestrians: [{id: 1, distance: 3.0, position: {x: 3.0, y: 0.0, z: 0.0}, confidence: 0.9}]}"
 ```
 Force close proximity (simulates `base_scan_proximity` seeing something
-within `proximity_range_m`, default 1.5m — same pedestrian-alert effect as
-the pedestrian signal above, just a plain bool, no distance field):
+within `proximity_range_m`, default 1.5m — MIDDLE_IDLE only, plays
+`pedestrian_alert_message` = safe_audio.mp3, just a plain bool, no distance
+field):
 ```bash
 ros2 topic pub -r 10 /perception/close_proximity std_msgs/msg/Bool "{data: true}"
 ```

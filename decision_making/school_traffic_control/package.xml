@@ -31,6 +31,7 @@
   <depend>play_motion2_msgs</depend>
   <depend>robot_audio_msgs</depend>
   <depend>drone_traffic_perception</depend>
+  <depend>interaction_skills</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
