@@ -373,6 +373,19 @@ Force-authorize the plate (skips CHECK_PLATE's vote/timeout):
 ```bash
 ros2 topic pub -r 10 /perception/force_plate_allowed std_msgs/msg/Bool "{data: true}"
 ```
+Force a pedestrian within alert range (`pedestrian_alert_range_m`, default
+10m — plays `pedestrian_introduction_message` or `pedestrian_alert_message`
+depending on current state, audio only):
+```bash
+ros2 topic pub -r 10 /perception/pedestrians traffic_perception_msgs/msg/PedestrianDetectionArray \
+  "{pedestrians: [{id: 1, distance: 3.0, position: {x: 3.0, y: 0.0, z: 0.0}, confidence: 0.9}]}"
+```
+Force close proximity (simulates `base_scan_proximity` seeing something
+within `proximity_range_m`, default 1.5m — same pedestrian-alert effect as
+the pedestrian signal above, just a plain bool, no distance field):
+```bash
+ros2 topic pub -r 10 /perception/close_proximity std_msgs/msg/Bool "{data: true}"
+```
 Switch perception modes by hand (bypasses `school_traffic_control`'s own
 switching, for testing either detection node standalone):
 ```bash

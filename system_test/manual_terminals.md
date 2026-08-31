@@ -105,8 +105,15 @@ ros2 launch xsens_mti_imu_bringup xsens_mti_imu_bringup.launch.py
 machine) — first point PulseAudio at the USB audio adapter, since the
 onboard/built-in sink on this Jetson is a non-functional stub:
 ```bash
-pactl set-default-sink "$(pactl list short sinks | grep -i usb | awk '{print $2}' | head -1)"
+USB_SINK="$(pactl list short sinks | grep -i usb | awk '{print $2}' | head -1)"
+pactl set-default-sink "$USB_SINK"
+pactl set-sink-volume "$USB_SINK" 150%
 ros2 launch robot_audio robot_audio.launch.py
+```
+Force the volume to 150% again later (e.g. after something else reset it),
+without relaunching:
+```bash
+pactl set-sink-volume "$(pactl list short sinks | grep -i usb | awk '{print $2}' | head -1)" 150%
 ```
 
 **3. Drone perception** (VisDrone/YOLO over RTMP) — its own venv, not a
