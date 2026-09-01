@@ -288,7 +288,8 @@ class SchoolTrafficControlNode(Node):
         self._motion_head_up = "norway_head_up"
         self._motion_head_left = "norway_head_left"
         self._motion_head_front = "norway_head_front"
-
+        self._motion_hello_left = "norway_hello_left"
+        self._motion_hello_left_wave = "norway_hello_left_wave"
 
         self._range_near = float(self.get_parameter('range_near_m').value)
         self._range_far = float(self.get_parameter('range_far_m').value)
@@ -487,6 +488,7 @@ class SchoolTrafficControlNode(Node):
         # ── State machine ────────────────────────────────────────────────
         self._state = State.MIDDLE_IDLE
         self._send_motion(self._motion_default)
+        self._send_motion(self._motion_hello_left)
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
 
         self._timer = self.create_timer(1.0 / control_rate_hz, self._tick)
@@ -801,9 +803,12 @@ class SchoolTrafficControlNode(Node):
                 self._pedestrian_alert_cooldown:
             return
         if scan:
-            message = self._pedestrian_alert_message
-            trigger = 'pedestrian_alert'
-            expression = self._pedestrian_alert_expression
+            #message = self._pedestrian_alert_message
+            #trigger = 'pedestrian_alert'
+            #expression = self._pedestrian_alert_expression
+            message = self._pedestrian_introduction_message
+            trigger = 'pedestrian_introduction'
+            expression = self._pedestrian_introduction_expression
         else:
             message = self._pedestrian_introduction_message
             trigger = 'pedestrian_introduction'
@@ -811,6 +816,7 @@ class SchoolTrafficControlNode(Node):
         self._set_expression(expression)
         self._log_event(trigger, camera_lidar=camera_lidar, scan=scan)
         self._send_audio(message)
+        self._send_motion(self._motion_hello_left_wave)
 
     def _maybe_check_drone_link(self):
         """Edge-detected drone-link staleness — no heartbeat topic exists
