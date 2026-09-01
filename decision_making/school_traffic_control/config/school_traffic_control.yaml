@@ -95,7 +95,7 @@ school_traffic_control_node:
 
     # VehicleDetectionCounts.raw_detections is buffered over this trailing
     # window and its statistical mode compared against parking_free_threshold.
-    parking_free_threshold: 12
+    parking_free_threshold: 18
     parking_count_window_s: 1.0
 
     # Drone link staleness: no heartbeat topic exists upstream, so this is
