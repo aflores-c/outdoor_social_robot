@@ -488,7 +488,7 @@ class SchoolTrafficControlNode(Node):
         # ── State machine ────────────────────────────────────────────────
         self._state = State.MIDDLE_IDLE
         self._send_motion(self._motion_default)
-        self._send_motion(self._motion_hello_left)
+        #self._send_motion(self._motion_hello_left)
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
 
         self._timer = self.create_timer(1.0 / control_rate_hz, self._tick)
@@ -816,7 +816,7 @@ class SchoolTrafficControlNode(Node):
         self._set_expression(expression)
         self._log_event(trigger, camera_lidar=camera_lidar, scan=scan)
         self._send_audio(message)
-        self._send_motion(self._motion_hello_left_wave)
+        #self._send_motion(self._motion_hello_left_wave)
 
     def _maybe_check_drone_link(self):
         """Edge-detected drone-link staleness — no heartbeat topic exists
