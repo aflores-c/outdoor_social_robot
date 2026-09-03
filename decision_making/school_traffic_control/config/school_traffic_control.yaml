@@ -41,10 +41,13 @@ school_traffic_control_node:
     # Pose B — cleared position used while letting a vehicle pass
     # Captured via `ros2 run tf2_ros tf2_echo map base_link` at the
     # pulled-aside spot.
-    pose_b_x: 1.814
-    pose_b_y: 1.186
-    pose_b_phi_deg: -56.86
-
+    #ros2 action send_goal /go_to_xy_phi base_navigation/action/GoToXYPhi "{x: 0.0, y: 0.0, phi: 0.0}" --feedback
+    #pose_b_x: -1.814
+    #pose_b_y: 1.186
+    #pose_b_phi_deg: -56.86
+    pose_b_x: -0.940
+    pose_b_y: 0.666
+    pose_b_phi_deg: -45.03
     # Arm gesture motion names — must exist in the play_motion2_mgr
     # `motions` parameter, see config/arm_motions.yaml
     motion_default: default_gesture
