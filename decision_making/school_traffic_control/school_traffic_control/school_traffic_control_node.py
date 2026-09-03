@@ -1125,7 +1125,11 @@ class SchoolTrafficControlNode(Node):
 
     def _passing_vehicle(self):
         self.get_logger().info('Plate allowed — state=CHECK_VEHICLE_IN_RANGE (waving)')
-        self._send_motion(self._motion_pass_wave)
+        # allow_repeat=True: this is called once per completed wave cycle
+        # while the vehicle is still in range (see _tick's
+        # CHECK_VEHICLE_IN_RANGE branch) and is meant to fire the same
+        # motion again each time, not just ensure it ran once.
+        self._send_motion(self._motion_pass_wave, allow_repeat=True)
 
     def _stop_cross_vehicle_audio_loop(self):
         self._cross_vehicle_looping = False
@@ -1185,8 +1189,9 @@ class SchoolTrafficControlNode(Node):
         if request_id == self._nav_request_id:
             self._dispatch_nav_goal(pose, request_id)
 
-    def _send_motion(self, motion_name: str, wait: bool = True):
-        if self._motion_done and self._motion_succeeded and motion_name == self._current_motion_name:
+    def _send_motion(self, motion_name: str, wait: bool = True, allow_repeat: bool = False):
+        if (not allow_repeat and self._motion_done and self._motion_succeeded
+                and motion_name == self._current_motion_name):
             # This exact motion already ran to completion successfully —
             # nothing to do. Without this, an idempotent _enter_* method
             # calling _send_motion every tick (see _enter_vehicle_stop)
@@ -1195,6 +1200,11 @@ class SchoolTrafficControlNode(Node):
             # completion would otherwise fall through to a fresh dispatch,
             # clearing _motion_done again before the caller's own
             # `if self._motion_done:` check ever sees it True.
+            #
+            # allow_repeat=True opts back out of that no-op for a caller
+            # that genuinely wants the same motion to run again each time
+            # it's called (e.g. _passing_vehicle's wave loop) rather than
+            # "ensure this ran once".
             return
         if not self._motion_done:
             # Already running this exact motion, or it's already queued
@@ -1256,8 +1266,7 @@ class SchoolTrafficControlNode(Node):
         self._current_motion_name = motion_name
 
         future = self._motion_client.send_goal_async(goal)
-        future.add_done_callback(
-            lambda fut, rid=request_id: self._motion_goal_response_cb(fut, rid))
+        future.add_done_callback(self._motion_goal_response_cb)
 
     def _maybe_dispatch_pending_motion(self):
         if not self._motion_pending:
@@ -1327,9 +1336,18 @@ class SchoolTrafficControlNode(Node):
             self._send_audio(self._vehicle_pass_message)
 
     def _nav_goal_response_cb(self, future, request_id):
-        goal_handle = future.result()
-        if not goal_handle or not goal_handle.accepted:
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self.get_logger().error(f'go_to_xy_phi send_goal failed: {exc}')
+            self._nav_goal_handle = None
+            self._nav_done = True
+            self._nav_succeeded = False
+            self._maybe_dispatch_pending_nav_goal()
+            return
+        if not goal_handle.accepted:
             self.get_logger().warn('go_to_xy_phi goal rejected')
+            self._nav_goal_handle = None
             self._nav_done = True
             self._nav_succeeded = False
             self._maybe_dispatch_pending_nav_goal()
@@ -1347,22 +1365,30 @@ class SchoolTrafficControlNode(Node):
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._nav_result_cb)
 
-    def _motion_goal_response_cb(self, future, request_id):
-        goal_handle = future.result()
-        if not goal_handle or not goal_handle.accepted:
-            self.get_logger().warn('play_motion2 goal rejected')
+    def _motion_goal_response_cb(self, future):
+        # No request_id/supersession check here (unlike its nav
+        # equivalent) — a normal wait=True queued motion doesn't get a
+        # real id until it's actually dispatched (see
+        # _maybe_dispatch_pending_motion), so there's never a second,
+        # genuinely newer dispatch racing this one. Real preemption
+        # (wait=False) already cancels the prior in-flight goal directly
+        # at the call site in _send_motion — this callback doesn't need
+        # to re-detect that itself.
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self.get_logger().error(f'play_motion2 send_goal failed: {exc}')
+            self._motion_goal_handle = None
             self._motion_done = True
             self._motion_succeeded = False
             self._maybe_dispatch_pending_motion()
             return
-        if request_id != self._motion_request_id:
-            # Same race as above: this motion was superseded before it was
-            # even accepted. Cancel it, but still track its result so the
-            # pending motion only gets dispatched once it has actually
-            # finished — not merely once the cancel is acknowledged.
-            goal_handle.cancel_goal_async()
-            result_future = goal_handle.get_result_async()
-            result_future.add_done_callback(self._motion_result_cb)
+        if not goal_handle.accepted:
+            self.get_logger().warn('play_motion2 goal rejected')
+            self._motion_goal_handle = None
+            self._motion_done = True
+            self._motion_succeeded = False
+            self._maybe_dispatch_pending_motion()
             return
         self._motion_goal_handle = goal_handle
         result_future = goal_handle.get_result_async()
@@ -1378,8 +1404,17 @@ class SchoolTrafficControlNode(Node):
         self._maybe_dispatch_pending_nav_goal()
 
     def _motion_result_cb(self, future):
-        result = future.result().result
+        try:
+            result = future.result().result
+        except Exception as exc:
+            self.get_logger().error(f'play_motion2 result exception: {exc}')
+            self._motion_goal_handle = None
+            self._motion_done = True
+            self._motion_succeeded = False
+            self._maybe_dispatch_pending_motion()
+            return
         self.get_logger().info(f'play_motion2 result: success={result.success} ({result.error})')
+        self._motion_goal_handle = None
         self._motion_done = True
         self._motion_succeeded = result.success
         self._maybe_dispatch_pending_motion()
