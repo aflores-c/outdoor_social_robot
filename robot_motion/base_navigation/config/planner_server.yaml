@@ -29,23 +29,34 @@ global_costmap:
       track_unknown_space: True
       always_send_full_costmap: True
 
-      plugins: ["static_layer", "obstacle_laser_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_voxel_layer", "inflation_layer"]
 
-      obstacle_laser_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
+      # Same VoxelLayer approach as the controller_server local_costmap
+      # configs — see their comments for the full reasoning. AMCL still
+      # uses /scan_outdoor unchanged.
+      obstacle_voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
-        observation_sources: scan
+        publish_voxel_map: False
+        observation_sources: velodyne
         combination_method: 0
         footprint_clearing_enabled: True
-        scan:
-          topic: "/scan_outdoor"
+        origin_z: 0.0
+        z_resolution: 0.1
+        z_voxels: 20
+        mark_threshold: 0
+        velodyne:
+          topic: "/velodyne_points"
+          data_type: "PointCloud2"
           expected_update_rate: 0.2 # seconds
+          # See controller_server_diff_drive.yaml's comment — verify
+          # against this robot's actual base_link<->velodyne TF before
+          # trusting in the field.
+          min_obstacle_height: 0.10
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           observation_persistence: 2.0
-          inf_is_valid: False
-          data_type: "LaserScan"
           raytrace_max_range: 15.0
           raytrace_min_range: 0.0
           obstacle_max_range: 14.0

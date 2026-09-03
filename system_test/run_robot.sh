@@ -8,6 +8,11 @@
 #   - pose_a_x/y/phi_deg and pose_b_x/y/phi_deg in school_traffic_control's
 #     config yaml are already filled in (see docs/system_test.md phase 2.3) —
 #     first run of a NEW map/site will not have these yet.
+#   - zone_x/zone_y in crossing_zone_monitor's config are already calibrated
+#     for this site — same idea as pose_a/pose_b, first run of a NEW map/site
+#     will not have these yet (left at placeholder zeros, the zone is
+#     degenerate). school_traffic_control fails safe without this: it just
+#     stays in CHECK_VEHICLE_IN_RANGE instead of RETURNING.
 #   - PAL's own base laser bringup (omni_base_laser_sensors) is available
 #     for base_scan_proximity's /scan input — comment out that block below
 #     if you don't need the close-proximity safety net for this test.
@@ -40,6 +45,12 @@ sleep 2
 launch_bg amcl            ros2 launch amcl_2d_localization amcl_localization.launch.py
 sleep 2
 launch_bg base_navigation ros2 launch base_navigation nav2_navigation.launch.py
+
+echo "=== Crossing-zone monitor (needs /velodyne_points + map frame from AMCL) ==="
+echo "    zone_x/zone_y in its config must be calibrated for this site first —"
+echo "    see docs/system_test.md. school_traffic_control fails safe (stays in"
+echo "    CHECK_VEHICLE_IN_RANGE) if this isn't running."
+launch_bg crossing_zone_monitor ros2 launch crossing_zone_monitor crossing_zone_monitor.launch.py
 
 echo "=== Base 2D lidar (SICK front+rear) for base_scan_proximity ==="
 echo "    Comment this block out if not testing the close-proximity safety net."

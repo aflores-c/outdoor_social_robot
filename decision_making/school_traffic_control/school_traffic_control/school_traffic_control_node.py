@@ -38,8 +38,9 @@ Perception load switching: traffic_object_detection and
 vehicle_plate_detection are both heavy YOLO models the Jetson can't
 comfortably run at once (see _set_perception_mode). Traffic detection runs
 whenever this node needs to see the vehicle itself (MIDDLE_IDLE,
-VEHICLE_STOP, WAIT_TO_LEAVE, CROSS_VEHICLE, CHECK_VEHICLE_IN_RANGE,
-RETURNING); plate detection only runs during CHECK_PLATE.
+VEHICLE_STOP, CHECK_VEHICLE_STOPPED, WAIT_TO_LEAVE, CROSS_VEHICLE,
+CHECK_VEHICLE_IN_RANGE, RETURNING); plate detection only runs during
+CHECK_PLATE.
 
 Inputs:
   <vehicles_topic>       traffic_perception_msgs/VehicleDetectionArray
@@ -56,14 +57,49 @@ Outputs (action clients):
 
 State machine (vehicles only):
   MIDDLE_IDLE             -> base at pose A, default arm gesture. Waiting for a
-                             vehicle in the close range.
+                             vehicle in the close range. On detection,
+                             _enter_vehicle_stop is called every tick (it's
+                             idempotent — _send_motion/_send_audio no-op on a
+                             repeat request already running/queued) but
+                             self._state stays MIDDLE_IDLE until that same
+                             call sees the stop gesture has actually
+                             finished, only then flipping to VEHICLE_STOP —
+                             so the state/logged vehicle_detected event never
+                             fires ahead of what the robot has actually done,
+                             and a motion in progress is never cut off by
+                             this transition. The audio is fire-and-forget
+                             (not waited on) — only the motion gates it.
   VEHICLE_STOP            -> base stays at pose A, stop gesture. Traffic detection
                              stays on here (need VehicleDetection.stopped) —
                              waiting for the vehicle to actually come to a stop.
+                             -> CHECK_VEHICLE_STOPPED the instant it first
+                             reads as stopped (a single frame, unconfirmed).
                              -> MIDDLE_IDLE if it leaves the range first.
-  CHECK_PLATE             -> head motion looks down at the plate first; only once
-                             that motion finishes does plate detection turn on and
-                             the plate_confirmation_timeout_s timer start.
+  CHECK_VEHICLE_STOPPED   -> safety buffer, no new motion dispatched (the stop
+                             gesture from VEHICLE_STOP is already playing/done)
+                             — just debounces the stopped reading for
+                             vehicle_stopped_confirm_s (see
+                             _vehicle_stopped_confirmed) before trusting it,
+                             the same way _vehicle_confirmed_gone already
+                             debounces the vehicle leaving.
+                             -> CHECK_PLATE once stopped=True has held for the
+                             full confirm window — same idempotent pattern as
+                             VEHICLE_STOP->CHECK_PLATE used to be:
+                             _enter_check_plate is called every tick once
+                             confirmed, dispatching the head-down motion
+                             (queued behind the stop gesture if it's somehow
+                             still finishing, never cutting it off) and only
+                             flipping self._state once that motion is done.
+                             -> VEHICLE_STOP if it reads not-stopped again
+                             before being confirmed (still present, just not
+                             yet/no-longer stopped) — re-enters here once it
+                             stops again.
+                             -> MIDDLE_IDLE if it leaves the range first.
+  CHECK_PLATE             -> entered only once the head-down motion is already
+                             done (see above), so plate detection and the
+                             plate_confirmation_timeout_s timer start
+                             immediately on entry — no separate internal wait
+                             needed here.
                              -> CROSS_VEHICLE if the plate is confirmed in time.
                              -> WAIT_TO_LEAVE if the timer expires first.
   WAIT_TO_LEAVE            -> head motion back up first; once that finishes, the
@@ -80,7 +116,15 @@ State machine (vehicles only):
                              authorized at CROSS_VEHICLE entry, not just "any
                              vehicle in range" — a second, not-yet-authorized
                              car queued behind it doesn't block the return.
-                             -> RETURNING once that specific vehicle leaves.
+                             -> RETURNING once that specific vehicle leaves
+                             the camera+lidar classification's range AND
+                             crossing_zone_monitor's independent, ground-
+                             filtered fixed-zone check also reads clear (see
+                             _crossing_vehicle_confirmed_gone) — the camera
+                             can lose track of a vehicle passing close
+                             beside the robot before it's actually clear of
+                             the lane, so both must agree before the base
+                             starts moving back toward it.
   RETURNING                -> base moves back to pose A, sent together with an
                              arm gesture: default/arms_init if only one car was
                              ever in range, or the stop gesture if a second
@@ -116,6 +160,7 @@ from robot_audio_msgs.action import PlayAudio
 class State(Enum):
     MIDDLE_IDLE = auto()
     VEHICLE_STOP = auto()
+    CHECK_VEHICLE_STOPPED = auto()
     CHECK_PLATE = auto()
     WAIT_TO_LEAVE = auto()
     CROSS_VEHICLE = auto()
@@ -134,6 +179,10 @@ class SchoolTrafficControlNode(Node):
         self.declare_parameter('pedestrians_topic', '/perception/pedestrians')
         self.declare_parameter('plate_allowed_topic', '/perception/plate_allowed')
         self.declare_parameter('close_proximity_topic', '/perception/close_proximity')
+        # crossing_zone_monitor: ground-filtered Velodyne-vs-fixed-zone
+        # check, independent of the camera-based vehicle classification —
+        # see _crossing_zone_clear / _crossing_vehicle_confirmed_gone.
+        self.declare_parameter('crossing_zone_occupied_topic', '/perception/crossing_zone_occupied')
         self.declare_parameter('force_plate_allowed_topic', '/perception/force_plate_allowed')
         self.declare_parameter('drone_vehicle_detections_topic', 'drone_vehicle_detections')
         self.declare_parameter('emergency_topic', '/school_traffic_control/emergency')
@@ -184,6 +233,12 @@ class SchoolTrafficControlNode(Node):
         # right as a vehicle's stopped flag flips) instead of flickering
         # back to MIDDLE_IDLE/RETURNING and immediately back again.
         self.declare_parameter('vehicle_lost_confirm_s', 0.3)
+
+        # Debounce for treating the vehicle as genuinely stopped: target_vehicle
+        # must read VehicleDetection.stopped=True continuously for this long,
+        # in CHECK_VEHICLE_STOPPED, before committing to CHECK_PLATE — a single
+        # noisy/flickery stopped=True frame doesn't fast-track the crossing.
+        self.declare_parameter('vehicle_stopped_confirm_s', 2.0)
 
         # CHECK_PLATE: give up waiting for a registered-plate confirmation
         # after this long and fall back to WAIT_TO_LEAVE instead.
@@ -252,6 +307,7 @@ class SchoolTrafficControlNode(Node):
         pedestrians_topic = self.get_parameter('pedestrians_topic').value
         plate_allowed_topic = self.get_parameter('plate_allowed_topic').value
         close_proximity_topic = self.get_parameter('close_proximity_topic').value
+        crossing_zone_occupied_topic = self.get_parameter('crossing_zone_occupied_topic').value
         force_plate_allowed_topic = self.get_parameter('force_plate_allowed_topic').value
         drone_vehicle_detections_topic = self.get_parameter('drone_vehicle_detections_topic').value
         emergency_topic = self.get_parameter('emergency_topic').value
@@ -295,6 +351,8 @@ class SchoolTrafficControlNode(Node):
         self._range_far = float(self.get_parameter('range_far_m').value)
         self._vehicle_lost_confirm = Duration(
             seconds=float(self.get_parameter('vehicle_lost_confirm_s').value))
+        self._vehicle_stopped_confirm = Duration(
+            seconds=float(self.get_parameter('vehicle_stopped_confirm_s').value))
         self._plate_confirmation_timeout = Duration(
             seconds=float(self.get_parameter('plate_confirmation_timeout_s').value))
         self._plate_vote_min_yes = int(self.get_parameter('plate_vote_min_yes').value)
@@ -350,6 +408,13 @@ class SchoolTrafficControlNode(Node):
         self._close_proximity = False
         self._close_proximity_stamp = None
 
+        # crossing_zone_monitor's ground-filtered Velodyne-vs-fixed-zone
+        # check — see _crossing_zone_clear. Published by
+        # crossing_zone_monitor_node, independent of traffic_object_detection's
+        # camera+lidar classification.
+        self._crossing_zone_occupied = False
+        self._crossing_zone_occupied_stamp = None
+
         # (stamp, raw_detections) samples from VehicleDetectionCounts,
         # trimmed to the trailing parking_count_window_s on read — see
         # _count_mode/_parking_space_free.
@@ -373,6 +438,8 @@ class SchoolTrafficControlNode(Node):
         self.create_subscription(PedestrianDetectionArray, pedestrians_topic, self._pedestrians_cb, 10)
         self.create_subscription(Bool, plate_allowed_topic, self._plate_cb, 10)
         self.create_subscription(Bool, close_proximity_topic, self._close_proximity_cb, 10)
+        self.create_subscription(
+            Bool, crossing_zone_occupied_topic, self._crossing_zone_occupied_cb, 10)
         self.create_subscription(Bool, force_plate_allowed_topic, self._force_plate_cb, 10)
         self.create_subscription(Bool, emergency_topic, self._emergency_cb, 10)
         self.create_subscription(
@@ -422,6 +489,14 @@ class SchoolTrafficControlNode(Node):
         self._nav_done = True
         self._motion_done = True
 
+        # Name of the motion currently in flight (None if none) — lets
+        # _send_motion tell a genuinely new request apart from a caller
+        # simply re-invoking its own dispatch every tick (see the
+        # idempotent _enter_* method pattern), so repeat calls for the
+        # motion already running/queued are silent no-ops instead of
+        # piling up duplicate re-plays once it finishes.
+        self._current_motion_name = None
+
         # (request_id, goal_args) queued while a goal is still in flight;
         # dispatched once that goal's real result arrives — sending a
         # replacement goal any earlier gets rejected by the action server,
@@ -438,10 +513,11 @@ class SchoolTrafficControlNode(Node):
         # after the head-up motion finishes, same reasoning as above.
         self._wait_to_leave_stop_sent = False
 
-        # Set once the CHECK_PLATE head-down motion finishes and plate
-        # checking actually starts; used both as a "have we started
-        # checking yet" gate and for the plate_confirmation_timeout_s
-        # fallback to WAIT_TO_LEAVE.
+        # Set by _enter_check_plate once the head-down motion is confirmed
+        # done (self._state only ever becomes CHECK_PLATE at that point —
+        # see _enter_check_plate), so this always holds a real timestamp
+        # whenever self._state == CHECK_PLATE. Used for the
+        # plate_confirmation_timeout_s fallback to WAIT_TO_LEAVE.
         self._check_plate_entered_at = None
 
         # Timestamp of when target_vehicle first read as absent, used by
@@ -451,6 +527,13 @@ class SchoolTrafficControlNode(Node):
         # to each state that checks it (_enter_vehicle_stop,
         # _enter_wait_to_leave).
         self._vehicle_lost_since = None
+
+        # Timestamp of when target_vehicle first read as stopped, used by
+        # _vehicle_stopped_confirmed (CHECK_VEHICLE_STOPPED) to debounce a
+        # single noisy/flickery stopped=True frame before committing to
+        # CHECK_PLATE. Reset to None whenever it reads as not-stopped (or
+        # absent) again, and set fresh on CHECK_VEHICLE_STOPPED entry.
+        self._vehicle_stopped_since = None
 
         # CROSS_VEHICLE/CHECK_VEHICLE_IN_RANGE two-car queue tracking. The id
         # of the vehicle authorized/crossing (captured at CROSS_VEHICLE
@@ -513,6 +596,10 @@ class SchoolTrafficControlNode(Node):
     def _close_proximity_cb(self, msg: Bool):
         self._close_proximity = msg.data
         self._close_proximity_stamp = self.get_clock().now()
+
+    def _crossing_zone_occupied_cb(self, msg: Bool):
+        self._crossing_zone_occupied = msg.data
+        self._crossing_zone_occupied_stamp = self.get_clock().now()
 
     def _force_plate_cb(self, msg: Bool):
         if msg.data and not self._force_plate_allowed:
@@ -584,9 +671,36 @@ class SchoolTrafficControlNode(Node):
             return False
         return (self.get_clock().now() - self._vehicle_lost_since) >= self._vehicle_lost_confirm
 
+    def _vehicle_stopped_confirmed(self, target_vehicle) -> bool:
+        """True once target_vehicle has read VehicleDetection.stopped=True
+        continuously for at least vehicle_stopped_confirm_s — debounces a
+        single noisy/flickery stopped=True frame (mirrors
+        _vehicle_confirmed_gone's debounce for the opposite signal) so
+        CHECK_VEHICLE_STOPPED doesn't fast-track into CHECK_PLATE on one bad
+        reading."""
+        if target_vehicle is None or not target_vehicle.stopped:
+            self._vehicle_stopped_since = None
+            return False
+        if self._vehicle_stopped_since is None:
+            self._vehicle_stopped_since = self.get_clock().now()
+            return False
+        return (self.get_clock().now() - self._vehicle_stopped_since) >= self._vehicle_stopped_confirm
+
     def _crossing_vehicle_confirmed_gone(self) -> bool:
-        """CHECK_VEHICLE_IN_RANGE-specific version of _vehicle_confirmed_gone:
-        tracks the specific vehicle captured at CROSS_VEHICLE entry
+        """CHECK_VEHICLE_IN_RANGE's exit condition — gates RETURNING (base
+        moves back toward pose A) on BOTH signals agreeing the vehicle is
+        clear: the camera+lidar classification below (_camera_crossing_
+        vehicle_gone), AND crossing_zone_monitor's independent, ground-
+        filtered check of the fixed crossing-lane zone (_crossing_zone_
+        clear). The camera can lose track of a vehicle passing close beside
+        the robot well before it's actually clear of the lane — the zone
+        check exists specifically to catch that, so the robot doesn't start
+        driving back into a vehicle it merely stopped being able to see."""
+        camera_gone = self._camera_crossing_vehicle_gone()
+        return camera_gone and self._crossing_zone_clear()
+
+    def _camera_crossing_vehicle_gone(self) -> bool:
+        """Tracks the specific vehicle captured at CROSS_VEHICLE entry
         (self._crossing_vehicle_id), not "current closest in-range vehicle"
         — so a second, not-yet-authorized car queued behind it doesn't make
         the robot think the first (authorized) car is still there. Falls
@@ -608,6 +722,18 @@ class SchoolTrafficControlNode(Node):
             self._vehicle_id_lost_since = self.get_clock().now()
             return False
         return (self.get_clock().now() - self._vehicle_id_lost_since) >= self._vehicle_lost_confirm
+
+    def _crossing_zone_clear(self) -> bool:
+        """True only on a fresh 'not occupied' reading from
+        crossing_zone_monitor_node. Fail-safe: a stale or never-received
+        signal (e.g. that node isn't launched, or the zone hasn't been
+        calibrated yet) is treated as NOT confirmed clear, never as clear
+        — this check exists specifically to catch what the camera-based
+        _camera_crossing_vehicle_gone might miss, so it must not silently
+        no-op when its own data is missing."""
+        if not self._is_fresh(self._crossing_zone_occupied_stamp):
+            return False
+        return not self._crossing_zone_occupied
 
     def _pedestrian_blocking(self) -> bool:
         if not self._pedestrian_safety_gate:
@@ -677,7 +803,7 @@ class SchoolTrafficControlNode(Node):
             return
 
         self._maybe_retry_pending_goals()
-        self._maybe_alert_pedestrian()
+        #self._maybe_alert_pedestrian()
         self._maybe_check_drone_link()
 
         target_vehicle = self._closest_vehicle_in_range()
@@ -696,18 +822,24 @@ class SchoolTrafficControlNode(Node):
             if self._vehicle_confirmed_gone(target_vehicle):
                 self._enter_idle()
             elif target_vehicle is not None and target_vehicle.stopped:
+                self._enter_check_vehicle_stopped()
+
+        elif self._state == State.CHECK_VEHICLE_STOPPED:
+            # Safety buffer between VEHICLE_STOP and CHECK_PLATE: don't
+            # commit to the plate check off a single stopped=True frame —
+            # confirm it holds for vehicle_stopped_confirm_s first.
+            if self._vehicle_confirmed_gone(target_vehicle):
+                self._enter_idle()
+            elif target_vehicle is None or not target_vehicle.stopped:
+                # Reads as present-but-not-stopped again (not yet confirmed
+                # gone either) — back to VEHICLE_STOP to keep holding/
+                # waiting; can re-enter here once it stops again.
+                self._enter_vehicle_stop()
+            elif self._vehicle_stopped_confirmed(target_vehicle):
                 self._enter_check_plate()
 
         elif self._state == State.CHECK_PLATE:
-            if self._check_plate_entered_at is None:
-                # Still turning the head down — don't start trusting plate
-                # readings (or the confirmation timeout) until it's done,
-                # since the camera isn't pointed at the plate yet.
-                if self._motion_done:
-                    self._check_plate_entered_at = self.get_clock().now()
-                    self._plate_votes.clear()
-                    self._set_perception_mode(traffic_enabled=False, plate_enabled=True)
-            elif self._plate_ok():
+            if self._plate_ok():
                 self._enter_cross_vehicle(target_vehicle)
             elif (self.get_clock().now() - self._check_plate_entered_at) > self._plate_confirmation_timeout:
                 self._enter_wait_to_leave()
@@ -836,25 +968,54 @@ class SchoolTrafficControlNode(Node):
     # ── State transitions ───────────────────────────────────────────────
 
     def _enter_vehicle_stop(self):
-        self._log_prev_state = self._state
-        self._state = State.VEHICLE_STOP
-        self._vehicle_lost_since = None
-        self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture, watching for it to stop)')
-        self._log_event('vehicle_detected')
+        """Idempotent — safe to call every tick while still MIDDLE_IDLE and
+        a vehicle is in range (see _tick). Dispatches the stop gesture +
+        audio (both no-op on repeat thanks to _send_motion/_send_audio's own
+        in-flight guards) and only flips self._state to VEHICLE_STOP once
+        the motion has actually finished — so the state/logged event never
+        fires ahead of what the robot has actually done. Audio is fire-and-
+        forget here: not waited on (see _send_audio — no success/queue
+        tracking), only the motion gates the transition."""
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_motion(self._motion_stop)
         self._send_audio(self._vehicle_stop_message)
+        if self._motion_done:
+            self._log_prev_state = self._state
+            self._state = State.VEHICLE_STOP
+            self._vehicle_lost_since = None
+            self._vehicle_stopped_since = None
+            self.get_logger().info('Vehicle in range — state=VEHICLE_STOP (stop gesture, watching for it to stop)')
+            self._log_event('vehicle_detected')
+
+    def _enter_check_vehicle_stopped(self):
+        """Safety buffer between VEHICLE_STOP and CHECK_PLATE — no new
+        motion dispatched here (the stop gesture from VEHICLE_STOP is
+        already playing/done), just starts the vehicle_stopped_confirm_s
+        debounce window (see _vehicle_stopped_confirmed) so a single
+        noisy/flickery stopped=True frame can't fast-track into
+        CHECK_PLATE."""
+        self._log_prev_state = self._state
+        self._state = State.CHECK_VEHICLE_STOPPED
+        self._vehicle_stopped_since = self.get_clock().now()
+        self.get_logger().info('Vehicle reads as stopped — state=CHECK_VEHICLE_STOPPED (confirming before checking plate)')
+        self._log_event('vehicle_stopped_observed')
 
     def _enter_check_plate(self):
-        self._log_prev_state = self._state
-        self._state = State.CHECK_PLATE
-        # Left None until the head-down motion finishes — see _tick, which
-        # starts the actual plate checking (perception mode + votes +
-        # timeout timer) only once that happens.
-        self._check_plate_entered_at = None
-        self.get_logger().info('Vehicle stopped — state=CHECK_PLATE (head down, checking plate)')
-        self._log_event('vehicle_stopped_confirmed')
+        """Idempotent — safe to call every tick once target_vehicle.stopped
+        (see _tick). Dispatches the head-down motion (queues behind any
+        still-finishing VEHICLE_STOP motion, no-ops on repeat) and only
+        flips self._state to CHECK_PLATE — starting the actual plate check
+        (perception mode + votes + timeout timer) — once that motion is
+        confirmed done."""
         self._send_motion(self._motion_head_down)
+        if self._motion_done:
+            self._log_prev_state = self._state
+            self._state = State.CHECK_PLATE
+            self._check_plate_entered_at = self.get_clock().now()
+            self._plate_votes.clear()
+            self.get_logger().info('Vehicle stopped — state=CHECK_PLATE (head down, checking plate)')
+            self._log_event('vehicle_stopped_confirmed')
+            self._set_perception_mode(traffic_enabled=False, plate_enabled=True)
 
     def _enter_wait_to_leave(self):
         self._log_prev_state = self._state
@@ -911,12 +1072,19 @@ class SchoolTrafficControlNode(Node):
         self._send_motion(self._motion_stop if self._had_second_vehicle else self._motion_arms_init)
 
     def _enter_idle(self, reason: str = 'Vehicle left range'):
-        self._log_prev_state = self._state
-        self._state = State.MIDDLE_IDLE
-        self.get_logger().info(f'{reason} — state=MIDDLE_IDLE (default gesture)')
-        self._log_event('vehicle_left_range' if reason == 'Vehicle left range' else 'emergency_cleared')
+        """Idempotent — safe to call every tick from whichever state is
+        exiting to MIDDLE_IDLE (VEHICLE_STOP/WAIT_TO_LEAVE on vehicle-gone,
+        EMERGENCY on clear — see _tick). Dispatches the default arm gesture
+        and only flips self._state to MIDDLE_IDLE once that motion is
+        actually done, so we don't jump to another state before this
+        gesture has finished."""
         self._set_perception_mode(traffic_enabled=True, plate_enabled=False)
         self._send_motion(self._motion_arms_init)
+        if self._motion_done:
+            self._log_prev_state = self._state
+            self._state = State.MIDDLE_IDLE
+            self.get_logger().info(f'{reason} — state=MIDDLE_IDLE (default gesture)')
+            self._log_event('vehicle_left_range' if reason == 'Vehicle left range' else 'emergency_cleared')
 
     def _enter_emergency(self):
         self._log_prev_state = self._state
@@ -993,20 +1161,30 @@ class SchoolTrafficControlNode(Node):
         if request_id == self._nav_request_id:
             self._dispatch_nav_goal(pose, request_id)
 
-    def _send_motion(self, motion_name: str):
-        self._motion_request_id += 1
-        request_id = self._motion_request_id
-
+    def _send_motion(self, motion_name: str, wait: bool = True):
         if not self._motion_done:
-            # Same reasoning as _send_nav_goal: queue and cancel, then
-            # dispatch once the current goal's real result comes back.
-            self._motion_pending = (request_id, motion_name)
-            if self._motion_goal_handle is not None:
+            # Already running this exact motion, or it's already next up in
+            # the queue -> nothing to do. Makes _send_motion idempotent for
+            # repeat calls with the same name, so an _enter_* method can
+            # call it unconditionally every tick (see e.g. _enter_vehicle_stop)
+            # without piling up duplicate re-plays once the current one ends.
+            queued_name = self._motion_pending[1] if self._motion_pending else None
+            if motion_name in (self._current_motion_name, queued_name):
+                return
+            # wait=True (default): let the in-flight motion finish on its
+            # own — just queue behind it, don't cancel. wait=False keeps the
+            # old preempt behavior (cancel now, dispatch once the cancel's
+            # real result comes back) for a caller that genuinely wants to
+            # interrupt.
+            self._motion_request_id += 1
+            self._motion_pending = (self._motion_request_id, motion_name)
+            if not wait and self._motion_goal_handle is not None:
                 self._motion_goal_handle.cancel_goal_async()
             return
 
+        self._motion_request_id += 1
         self._motion_pending = None
-        self._dispatch_motion(motion_name, request_id)
+        self._dispatch_motion(motion_name, self._motion_request_id)
 
     def _dispatch_motion(self, motion_name, request_id):
         if not self._motion_client.wait_for_server(timeout_sec=0.0):
@@ -1022,6 +1200,7 @@ class SchoolTrafficControlNode(Node):
         goal.skip_planning = False
 
         self._motion_done = False
+        self._current_motion_name = motion_name
 
         future = self._motion_client.send_goal_async(goal)
         future.add_done_callback(

@@ -57,6 +57,11 @@ school_traffic_control_node:
     range_near_m: 2.0
     range_far_m: 10.0
 
+    # CHECK_VEHICLE_STOPPED: VehicleDetection.stopped must read True
+    # continuously for this long before trusting it and moving on to
+    # CHECK_PLATE — debounces a single noisy/flickery stopped=True frame.
+    vehicle_stopped_confirm_s: 2.0
+
     # CHECK_PLATE: give up waiting for a registered-plate confirmation
     # after this long and fall back to WAIT_TO_LEAVE instead.
     plate_confirmation_timeout_s: 15.0

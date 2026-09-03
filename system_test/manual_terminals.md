@@ -9,9 +9,9 @@ already being up), but nothing here backgrounds/disowns anything — closing
 a terminal kills that terminal's node, which is the point.
 
 Assumes the same prerequisites as `system_test.md`: a map already built and
-saved, `pose_a_x/y/phi_deg`/`pose_b_x/y/phi_deg` already filled in for an
-existing site, and `sparkfun_rtk_gps_bringup`'s
-`config/ntrip_credentials.yaml` already filled in.
+saved, `pose_a_x/y/phi_deg`/`pose_b_x/y/phi_deg` and `crossing_zone_monitor`'s
+`zone_x`/`zone_y` already calibrated for an existing site, and
+`sparkfun_rtk_gps_bringup`'s `config/ntrip_credentials.yaml` already filled in.
 
 ---
 
@@ -52,7 +52,18 @@ ros2 launch amcl_2d_localization amcl_localization.launch.py map_name:=my_map
 ros2 launch base_navigation nav2_navigation.launch.py
 ```
 
-**6. Base scan proximity** — brings up PAL's base laser bringup
+**6. Crossing-zone monitor** (needs velodyne + AMCL's map frame up first) —
+ground-filtered Velodyne-vs-fixed-zone check, independent of the
+camera-based vehicle classification; `school_traffic_control`'s
+`CHECK_VEHICLE_IN_RANGE` -> `RETURNING` transition fails safe (stays put)
+without a fresh reading from this. `zone_x`/`zone_y` in its config must be
+calibrated for this site first (same `tf2_echo`-based approach as
+`pose_a`/`pose_b` — see Phase 2.3).
+```bash
+ros2 launch crossing_zone_monitor crossing_zone_monitor.launch.py
+```
+
+**7. Base scan proximity** — brings up PAL's base laser bringup
 (`omni_base_laser_sensors`, SICK front+rear) itself now, so don't also
 launch that separately — it'd fight the same USB devices. Skip this
 terminal if you don't need the close-proximity safety net. Also disables
@@ -66,20 +77,21 @@ Use only the front laser instead of the merged front+rear scan:
 ros2 launch base_scan_proximity base_scan_proximity.launch.py scan_topic:=/safe_scan_front_raw
 ```
 
-**7. School traffic control**
+**8. School traffic control**
 ```bash
 ros2 launch school_traffic_control school_traffic_control.launch.py
 ```
 
-**8. Benchmark logging** — only if this run is for the paper's data collection
+**9. Benchmark logging** — only if this run is for the paper's data collection
 ```bash
 ros2 launch benchmark_logging benchmark_logging.launch.py
 ```
 
 Verify:
 ```bash
-ros2 topic echo /fix                 # GPS
-ros2 topic hz /amcl_pose             # localization alive
+ros2 topic echo /fix                              # GPS
+ros2 topic hz /amcl_pose                          # localization alive
+ros2 topic echo /perception/crossing_zone_occupied # crossing-zone monitor alive
 ```
 
 ---

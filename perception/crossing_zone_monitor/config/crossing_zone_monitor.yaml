@@ -1,0 +1,20 @@
+crossing_zone_monitor_node:
+  ros__parameters:
+    pointcloud_topic: "/velodyne_points"
+    output_topic: "/perception/crossing_zone_occupied"
+    lidar_frame: "velodyne"
+    map_frame: "map"
+
+    # Crossing-lane zone, calibrated for this site — axis-aligned rectangle
+    # relative to the map origin (0,0): x in [-4.0, 1.0] (4m behind, 1m
+    # ahead), y in [-1.0, 1.0] (1m each side). Corners listed in order
+    # around the perimeter, zone_x[i]/zone_y[i] paired.
+    zone_x: [-4.0, 1.0, 1.0, -4.0]
+    zone_y: [-1.0, -1.0, 1.0, 1.0]
+
+    # Ground filtering (map_frame, after transform) — same
+    # reasoning/defaults as base_navigation's obstacle_voxel_layer. Verify
+    # against this robot's actual base_link<->velodyne TF before trusting
+    # in the field.
+    min_obstacle_height: 0.10
+    max_obstacle_height: 2.0
