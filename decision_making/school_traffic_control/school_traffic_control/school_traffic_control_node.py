@@ -1208,15 +1208,27 @@ class SchoolTrafficControlNode(Node):
                 return
             # wait=True (default): let the in-flight motion finish on its
             # own — just append behind it (and whatever's already queued),
-            # don't cancel. wait=False keeps the old preempt behavior
-            # (cancel now, dispatch once the cancel's real result comes
-            # back) for a caller that genuinely wants to interrupt —
-            # jumps the rest of the queue since it's meant to replace
-            # what's currently running, not follow it.
-            self._motion_request_id += 1
+            # don't cancel. request_id is left as None here — deliberately
+            # NOT bumping self._motion_request_id yet, even though nothing
+            # is actually being (re)dispatched to the server. Bumping it
+            # here used to make the *currently in-flight* goal's own
+            # _motion_goal_response_cb — which fires later, async, once
+            # the goal is accepted — see self._motion_request_id has moved
+            # past its id and wrongly self-cancel as "superseded", even
+            # though this call never sent anything to the server. The real
+            # id is assigned in _maybe_dispatch_pending_motion, only once
+            # this entry is actually dispatched.
+            #
+            # wait=False keeps the old preempt behavior (cancel now,
+            # dispatch once the cancel's real result comes back) for a
+            # caller that genuinely wants to interrupt — jumps the rest of
+            # the queue since it's meant to replace what's currently
+            # running, not follow it. This case really is a fresh request
+            # superseding the in-flight one, so it does get a real id now.
             if wait:
-                self._motion_pending.append((self._motion_request_id, motion_name))
+                self._motion_pending.append((None, motion_name))
             else:
+                self._motion_request_id += 1
                 self._motion_pending.appendleft((self._motion_request_id, motion_name))
                 if self._motion_goal_handle is not None:
                     self._motion_goal_handle.cancel_goal_async()
@@ -1251,6 +1263,13 @@ class SchoolTrafficControlNode(Node):
         if not self._motion_pending:
             return
         request_id, motion_name = self._motion_pending.popleft()
+        if request_id is None:
+            # Queued via the wait=True path in _send_motion, which
+            # deliberately left this unassigned — this is the first point
+            # it's actually being sent to the server, so it gets its real
+            # id only now.
+            self._motion_request_id += 1
+            request_id = self._motion_request_id
         self._dispatch_motion(motion_name, request_id)
 
     def _set_expression(self, expression: str):
