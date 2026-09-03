@@ -20,4 +20,8 @@ data_logger_node:
     drone_link_status_topic: "drone_vehicle_detections_link_status"
     pose_topic: "/amcl_pose"
     pose_log_hz: 2.0
+    gps_topic: "/fix"
+    gps_log_hz: 0.0  # 0 = log every message, GPS is already low-rate
+    imu_topic: "/imu/data"
+    imu_log_hz: 10.0  # IMU publishes much faster than useful to log raw
     log_dir: "~/benchmark_data"

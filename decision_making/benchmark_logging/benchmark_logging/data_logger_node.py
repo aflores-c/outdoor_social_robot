@@ -21,6 +21,10 @@ Inputs:
   <drone_counts_topic>     drone_traffic_perception/VehicleDetectionCounts
   <drone_link_status_topic>  drone_traffic_perception/DroneLinkStatus
   <pose_topic>              geometry_msgs/PoseWithCovarianceStamped (default /amcl_pose)
+  <gps_topic>               sensor_msgs/NavSatFix (default /fix, sparkfun_rtk_gps_bringup)
+  <imu_topic>               sensor_msgs/Imu (default /imu/data, xsens_mti_imu_bringup) —
+                           throttled by imu_log_hz, same reasoning as pose_log_hz:
+                           this publishes far faster than is useful to log every frame of.
 
 Log schemas (one JSON object per line):
   events.jsonl:      {stamp, trial_id, prev_state, new_state, trigger, ...metadata}
@@ -28,6 +32,8 @@ Log schemas (one JSON object per line):
   plate_reads.jsonl: {stamp, plate_text, det_confidence, ocr_confidence, authorized}
   drone.jsonl:       {stamp, kind: "counts"|"link_status", ...}
   poses.jsonl:       {stamp, x, y, yaw_deg, cov_xx, cov_yy}
+  gps.jsonl:         {stamp, latitude, longitude, altitude, status, cov_xx, cov_yy, cov_zz}
+  imu.jsonl:         {stamp, yaw_deg, angular_velocity: {x,y,z}, linear_acceleration: {x,y,z}}
 """
 
 import json
@@ -41,12 +47,13 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
 from std_msgs.msg import Bool, String
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from sensor_msgs.msg import Imu, NavSatFix
 from traffic_perception_msgs.msg import (
     VehicleDetectionArray, PedestrianDetectionArray, PlateResult,
 )
 from drone_traffic_perception.msg import VehicleDetectionCounts, DroneLinkStatus
 
-_LOG_NAMES = ('events', 'detections', 'plate_reads', 'drone', 'poses')
+_LOG_NAMES = ('events', 'detections', 'plate_reads', 'drone', 'poses', 'gps', 'imu')
 
 
 def _yaw_deg_from_quaternion(q) -> float:
@@ -69,6 +76,10 @@ class DataLoggerNode(Node):
         self.declare_parameter('drone_link_status_topic', 'drone_vehicle_detections_link_status')
         self.declare_parameter('pose_topic', '/amcl_pose')
         self.declare_parameter('pose_log_hz', 2.0)
+        self.declare_parameter('gps_topic', '/fix')
+        self.declare_parameter('gps_log_hz', 0.0)  # 0 = log every message, GPS is already low-rate
+        self.declare_parameter('imu_topic', '/imu/data')
+        self.declare_parameter('imu_log_hz', 10.0)  # IMU publishes much faster than useful to log raw
         self.declare_parameter('log_dir', os.path.expanduser('~/benchmark_data'))
 
         current_trial_topic = self.get_parameter('current_trial_topic').value
@@ -83,6 +94,14 @@ class DataLoggerNode(Node):
         pose_log_hz = float(self.get_parameter('pose_log_hz').value)
         self._pose_log_period = 1.0 / pose_log_hz if pose_log_hz > 0 else 0.0
         self._last_pose_log_t = 0.0
+        gps_topic = self.get_parameter('gps_topic').value
+        gps_log_hz = float(self.get_parameter('gps_log_hz').value)
+        self._gps_log_period = 1.0 / gps_log_hz if gps_log_hz > 0 else 0.0
+        self._last_gps_log_t = 0.0
+        imu_topic = self.get_parameter('imu_topic').value
+        imu_log_hz = float(self.get_parameter('imu_log_hz').value)
+        self._imu_log_period = 1.0 / imu_log_hz if imu_log_hz > 0 else 0.0
+        self._last_imu_log_t = 0.0
         self._log_dir = os.path.expanduser(self.get_parameter('log_dir').value)
 
         self._active = False
@@ -104,6 +123,8 @@ class DataLoggerNode(Node):
         self.create_subscription(VehicleDetectionCounts, drone_counts_topic, self._on_drone_counts, 10)
         self.create_subscription(DroneLinkStatus, drone_link_status_topic, self._on_drone_link_status, 10)
         self.create_subscription(PoseWithCovarianceStamped, pose_topic, self._on_pose, 10)
+        self.create_subscription(NavSatFix, gps_topic, self._on_gps, 10)
+        self.create_subscription(Imu, imu_topic, self._on_imu, 10)
 
         self.get_logger().info(f"data_logger_node ready — log_dir='{self._log_dir}'")
 
@@ -221,6 +242,35 @@ class DataLoggerNode(Node):
             'x': p.x, 'y': p.y,
             'yaw_deg': _yaw_deg_from_quaternion(msg.pose.pose.orientation),
             'cov_xx': cov[0], 'cov_yy': cov[7],
+        })
+
+    def _on_gps(self, msg: NavSatFix):
+        if not self._active:
+            return
+        now = time.monotonic()
+        if self._gps_log_period > 0.0 and (now - self._last_gps_log_t) < self._gps_log_period:
+            return
+        self._last_gps_log_t = now
+        cov = msg.position_covariance  # row-major 3x3
+        self._write('gps', {
+            'latitude': msg.latitude, 'longitude': msg.longitude, 'altitude': msg.altitude,
+            'status': msg.status.status,
+            'cov_xx': cov[0], 'cov_yy': cov[4], 'cov_zz': cov[8],
+        })
+
+    def _on_imu(self, msg: Imu):
+        if not self._active:
+            return
+        now = time.monotonic()
+        if self._imu_log_period > 0.0 and (now - self._last_imu_log_t) < self._imu_log_period:
+            return
+        self._last_imu_log_t = now
+        av = msg.angular_velocity
+        la = msg.linear_acceleration
+        self._write('imu', {
+            'yaw_deg': _yaw_deg_from_quaternion(msg.orientation),
+            'angular_velocity': {'x': av.x, 'y': av.y, 'z': av.z},
+            'linear_acceleration': {'x': la.x, 'y': la.y, 'z': la.z},
         })
 
 
