@@ -9,7 +9,10 @@ crossing_zone_monitor_node:
     # relative to the map origin (0,0): x in [-4.0, 1.0] (4m behind, 1m
     # ahead), y in [-1.0, 1.0] (1m each side). Corners listed in order
     # around the perimeter, zone_x[i]/zone_y[i] paired.
-    zone_x: [-4.0, 1.0, 1.0, -4.0]
+    #zone_x: [-4.0, 1.0, 1.0, -4.0]
+    #zone_y: [-1.0, -1.0, 1.0, 1.0]
+
+    zone_x: [-1.0, 1.0, 1.0, -1.0]
     zone_y: [-1.0, -1.0, 1.0, 1.0]
 
     # Ground filtering (map_frame, after transform) — same
