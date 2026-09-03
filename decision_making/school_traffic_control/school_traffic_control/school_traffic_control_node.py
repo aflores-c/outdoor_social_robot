@@ -496,6 +496,14 @@ class SchoolTrafficControlNode(Node):
         # motion already running/queued are silent no-ops instead of
         # piling up duplicate re-plays once it finishes.
         self._current_motion_name = None
+        # True once _current_motion_name's goal has actually finished with
+        # result.success — set from the real play_motion2 result in
+        # _motion_result_cb, not just "a result arrived". Lets _send_motion
+        # stay a no-op for a repeat call *after* completion too (not only
+        # while still in flight), so an idempotent _enter_* method calling
+        # it every tick doesn't re-dispatch the same motion forever once it
+        # already succeeded.
+        self._motion_succeeded = False
 
         # (request_id, goal_args) queued while a goal is still in flight;
         # dispatched once that goal's real result arrives — sending a
@@ -1162,6 +1170,16 @@ class SchoolTrafficControlNode(Node):
             self._dispatch_nav_goal(pose, request_id)
 
     def _send_motion(self, motion_name: str, wait: bool = True):
+        if self._motion_done and self._motion_succeeded and motion_name == self._current_motion_name:
+            # This exact motion already ran to completion successfully —
+            # nothing to do. Without this, an idempotent _enter_* method
+            # calling _send_motion every tick (see _enter_vehicle_stop)
+            # would redispatch the same motion forever: _motion_done only
+            # guards the *in-flight* case below, so the first tick after
+            # completion would otherwise fall through to a fresh dispatch,
+            # clearing _motion_done again before the caller's own
+            # `if self._motion_done:` check ever sees it True.
+            return
         if not self._motion_done:
             # Already running this exact motion, or it's already next up in
             # the queue -> nothing to do. Makes _send_motion idempotent for
@@ -1293,6 +1311,7 @@ class SchoolTrafficControlNode(Node):
         if not goal_handle or not goal_handle.accepted:
             self.get_logger().warn('play_motion2 goal rejected')
             self._motion_done = True
+            self._motion_succeeded = False
             self._maybe_dispatch_pending_motion()
             return
         if request_id != self._motion_request_id:
@@ -1320,6 +1339,7 @@ class SchoolTrafficControlNode(Node):
         result = future.result().result
         self.get_logger().info(f'play_motion2 result: success={result.success} ({result.error})')
         self._motion_done = True
+        self._motion_succeeded = result.success
         self._maybe_dispatch_pending_motion()
 
 
