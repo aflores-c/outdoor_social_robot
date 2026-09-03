@@ -518,12 +518,13 @@ class SchoolTrafficControlNode(Node):
         # replacement goal any earlier gets rejected by the action server,
         # since it treats the previous goal as still busy until then.
         self._nav_pending = None
-        self._motion_pending = None
-
-        # Used only while in CROSS_VEHICLE, to sequence the pass gesture
-        # after the head-left motion finishes instead of sending both at
-        # once (a single in-flight motion goal can't be queued twice).
-        self._pass_gesture_sent = False
+        # FIFO of (request_id, motion_name) queued behind the in-flight
+        # motion — a real queue, not a single slot, because some _enter_*
+        # methods (e.g. _enter_cross_vehicle) call _send_motion several
+        # times back to back to run a short sequence of motions. A single
+        # slot would silently overwrite an earlier queued entry with a
+        # later one before it ever got to run.
+        self._motion_pending = deque()
 
         # Used only while in WAIT_TO_LEAVE, to sequence the stop gesture
         # after the head-up motion finishes, same reasoning as above.
@@ -922,7 +923,7 @@ class SchoolTrafficControlNode(Node):
         # _nav_result_cb/_motion_result_cb once the current goal finishes.
         if self._nav_pending is not None and self._nav_done:
             self._maybe_dispatch_pending_nav_goal()
-        if self._motion_pending is not None and self._motion_done:
+        if self._motion_pending and self._motion_done:
             self._maybe_dispatch_pending_motion()
 
     def _maybe_alert_pedestrian(self):
@@ -1053,7 +1054,6 @@ class SchoolTrafficControlNode(Node):
     def _enter_cross_vehicle(self, target_vehicle):
         self._log_prev_state = self._state
         self._state = State.CROSS_VEHICLE
-        self._pass_gesture_sent = False
         # Two-car queue tracking (see _crossing_vehicle_confirmed_gone):
         # remember which vehicle this crossing authorizes, and reset the
         # per-crossing queue bookkeeping fresh for this car.
@@ -1120,7 +1120,7 @@ class SchoolTrafficControlNode(Node):
         if self._motion_goal_handle is not None:
             self._motion_goal_handle.cancel_goal_async()
         self._nav_pending = None
-        self._motion_pending = None
+        self._motion_pending.clear()
         self._stop_cross_vehicle_audio_loop()
 
     def _passing_vehicle(self):
@@ -1197,36 +1197,43 @@ class SchoolTrafficControlNode(Node):
             # `if self._motion_done:` check ever sees it True.
             return
         if not self._motion_done:
-            # Already running this exact motion, or it's already next up in
-            # the queue -> nothing to do. Makes _send_motion idempotent for
-            # repeat calls with the same name, so an _enter_* method can
-            # call it unconditionally every tick (see e.g. _enter_vehicle_stop)
-            # without piling up duplicate re-plays once the current one ends.
-            queued_name = self._motion_pending[1] if self._motion_pending else None
-            if motion_name in (self._current_motion_name, queued_name):
+            # Already running this exact motion, or it's already queued
+            # somewhere behind it -> nothing to do. Makes _send_motion
+            # idempotent for repeat calls with the same name, so an
+            # _enter_* method can call it unconditionally every tick (see
+            # e.g. _enter_vehicle_stop) without piling up duplicate
+            # re-plays once the current one ends.
+            if motion_name == self._current_motion_name or any(
+                    motion_name == qn for _, qn in self._motion_pending):
                 return
             # wait=True (default): let the in-flight motion finish on its
-            # own — just queue behind it, don't cancel. wait=False keeps the
-            # old preempt behavior (cancel now, dispatch once the cancel's
-            # real result comes back) for a caller that genuinely wants to
-            # interrupt.
+            # own — just append behind it (and whatever's already queued),
+            # don't cancel. wait=False keeps the old preempt behavior
+            # (cancel now, dispatch once the cancel's real result comes
+            # back) for a caller that genuinely wants to interrupt —
+            # jumps the rest of the queue since it's meant to replace
+            # what's currently running, not follow it.
             self._motion_request_id += 1
-            self._motion_pending = (self._motion_request_id, motion_name)
-            if not wait and self._motion_goal_handle is not None:
-                self._motion_goal_handle.cancel_goal_async()
+            if wait:
+                self._motion_pending.append((self._motion_request_id, motion_name))
+            else:
+                self._motion_pending.appendleft((self._motion_request_id, motion_name))
+                if self._motion_goal_handle is not None:
+                    self._motion_goal_handle.cancel_goal_async()
             return
 
         self._motion_request_id += 1
-        self._motion_pending = None
         self._dispatch_motion(motion_name, self._motion_request_id)
 
     def _dispatch_motion(self, motion_name, request_id):
         if not self._motion_client.wait_for_server(timeout_sec=0.0):
             # Same reasoning as _dispatch_nav_goal: keep it queued and retry
-            # from _tick instead of dropping it.
+            # from _tick instead of dropping it. Goes back at the front —
+            # this motion was already next in line to run, so it shouldn't
+            # lose its place behind anything queued after it.
             self.get_logger().warn('play_motion2 action server not available, will retry',
                                     throttle_duration_sec=2.0)
-            self._motion_pending = (request_id, motion_name)
+            self._motion_pending.appendleft((request_id, motion_name))
             return
 
         goal = PlayMotion2.Goal()
@@ -1241,12 +1248,10 @@ class SchoolTrafficControlNode(Node):
             lambda fut, rid=request_id: self._motion_goal_response_cb(fut, rid))
 
     def _maybe_dispatch_pending_motion(self):
-        if self._motion_pending is None:
+        if not self._motion_pending:
             return
-        request_id, motion_name = self._motion_pending
-        self._motion_pending = None
-        if request_id == self._motion_request_id:
-            self._dispatch_motion(motion_name, request_id)
+        request_id, motion_name = self._motion_pending.popleft()
+        self._dispatch_motion(motion_name, request_id)
 
     def _set_expression(self, expression: str):
         """Publish a face expression, but only on actual change — this is
