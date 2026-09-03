@@ -1089,10 +1089,16 @@ class SchoolTrafficControlNode(Node):
         self._nav_target_name = 'pose_a'
         self._log_event('nav_goal_sent', target='pose_a')
         self._send_nav_goal(self._pose_a)
-        self._send_motion(self._motion_head_front)
+        # wait=False: the vehicle being confirmed gone can fire while the
+        # wave gesture (norway_pass_wave) is still mid-cycle — cut it off
+        # immediately here rather than letting it finish naturally
+        # (wait=True's default queue-behind behavior), so the head/arm
+        # reset starts right away instead of after one more wave.
+        self._send_motion(self._motion_head_front, wait=False)
         # A second (queued, unauthorized) car was in range at some point
         # during the crossing -> keep the stop gesture so it doesn't think
         # it's been waved through too. Otherwise, default/arms_init.
+        # Sequenced normally (wait=True) behind head_front above.
         self._send_motion(self._motion_stop if self._had_second_vehicle else self._motion_arms_init)
 
     def _enter_idle(self, reason: str = 'Vehicle left range'):
