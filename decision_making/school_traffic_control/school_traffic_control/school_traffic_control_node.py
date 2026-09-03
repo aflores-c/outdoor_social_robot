@@ -488,6 +488,14 @@ class SchoolTrafficControlNode(Node):
         # terminal result (success, rejection, or cancellation) arrives.
         self._nav_done = True
         self._motion_done = True
+        # True once the most recently *finished* nav goal actually reached
+        # its target (result.success) — set from the real go_to_xy_phi
+        # result in _nav_result_cb, not just "a result arrived". _nav_done
+        # alone flips True on rejection/failure too (e.g. base_navigation
+        # refuses to move while docked/charging), which used to make
+        # CROSS_VEHICLE/RETURNING treat "the goal finished" as "we arrived"
+        # and advance state without the base having actually moved.
+        self._nav_succeeded = False
 
         # Name of the motion currently in flight (None if none) — lets
         # _send_motion tell a genuinely new request apart from a caller
@@ -873,8 +881,14 @@ class SchoolTrafficControlNode(Node):
             elif not self._pass_gesture_sent:
                 self._pass_gesture_sent = True
                 self._send_motion(self._motion_pass)
-            elif self._nav_done:
+            elif self._nav_done and self._nav_succeeded:
                 self._enter_check_vehicle_in_range()
+            elif self._nav_done:
+                # Finished but didn't succeed (rejected, or the base
+                # controller refused to move — e.g. still docked/charging)
+                # — the base never actually reached pose B. Retry rather
+                # than advancing as if it had arrived.
+                self._send_nav_goal(self._pose_b)
 
         elif self._state == State.CHECK_VEHICLE_IN_RANGE:
             if self._crossing_vehicle_confirmed_gone():
@@ -894,11 +908,15 @@ class SchoolTrafficControlNode(Node):
                 self._passing_vehicle()
 
         elif self._state == State.RETURNING:
-            if self._nav_done and self._motion_done:
+            if self._nav_done and self._nav_succeeded and self._motion_done:
                 self._log_prev_state = self._state
                 self._state = State.MIDDLE_IDLE
                 self._log_event('returned_to_pose_a')
                 self.get_logger().info('Back at middle pose — state=MIDDLE_IDLE')
+            elif self._nav_done and not self._nav_succeeded:
+                # Same as CROSS_VEHICLE above — didn't actually reach pose A
+                # (rejected/failed goal), retry instead of declaring arrival.
+                self._send_nav_goal(self._pose_a)
 
     def _maybe_retry_pending_goals(self):
         # Only handles the "action server wasn't discovered yet" case: here
@@ -1291,6 +1309,7 @@ class SchoolTrafficControlNode(Node):
         if not goal_handle or not goal_handle.accepted:
             self.get_logger().warn('go_to_xy_phi goal rejected')
             self._nav_done = True
+            self._nav_succeeded = False
             self._maybe_dispatch_pending_nav_goal()
             return
         if request_id != self._nav_request_id:
@@ -1333,6 +1352,7 @@ class SchoolTrafficControlNode(Node):
         self._log_event('nav_goal_result', target=self._nav_target_name,
                          success=result.success, message=result.message)
         self._nav_done = True
+        self._nav_succeeded = result.success
         self._maybe_dispatch_pending_nav_goal()
 
     def _motion_result_cb(self, future):
