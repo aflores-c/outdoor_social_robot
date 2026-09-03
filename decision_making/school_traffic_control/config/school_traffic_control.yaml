@@ -36,7 +36,7 @@ school_traffic_control_node:
     # holding spot.
     pose_a_x: 0.313
     pose_a_y: 0.082
-    pose_a_phi_deg: 8.8
+    pose_a_phi_deg: 8.88
 
     # Pose B — cleared position used while letting a vehicle pass
     # Captured via `ros2 run tf2_ros tf2_echo map base_link` at the

@@ -8,14 +8,9 @@
 #   - pose_a_x/y/phi_deg and pose_b_x/y/phi_deg in school_traffic_control's
 #     config yaml are already filled in (see docs/system_test.md phase 2.3) —
 #     first run of a NEW map/site will not have these yet.
-#   - base_scan_proximity.launch.py brings up PAL's own base laser bringup
-#     (omni_base_laser_sensors) itself now — comment out that block below
-#     if you don't need the close-proximity safety net for this test. Don't
-#     also launch omni_base_laser_sensors separately elsewhere — it'd fight
-#     the SICK lasers' USB devices with this one. That launch also disables
-#     direct_laser_odometry's odom TF (see base_scan_proximity.launch.py's
-#     own comment) so it doesn't fight scan_matcher_bringup's odom TF from
-#     the outdoor Velodyne.
+#   - PAL's own base laser bringup (omni_base_laser_sensors) is available
+#     for base_scan_proximity's /scan input — comment out that block below
+#     if you don't need the close-proximity safety net for this test.
 #
 # Logs land in ~/system_test_logs/*.log — tail -f any of them to check status.
 
@@ -37,34 +32,24 @@ launch_bg() {
   echo "started $name (pid $!) -> $LOGDIR/$name.log"
 }
 
-echo "=== GPS (SparkFun ZED-F9P + RTK/NTRIP corrections, SAPOS BW) ==="
-echo "    ublox_gps/ntrip_client come from PAL's apt repo here (ros-humble-*),"
-echo "    not built from source — fill in config/ntrip_credentials.yaml"
-echo "    before launching if you haven't already."
-launch_bg gps ros2 launch sparkfun_rtk_gps_bringup gps_rtk.launch.py
-
-sleep 2
-
 echo "=== Localization + navigation ==="
-launch_bg velodyne        ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py ring:=2
+launch_bg velodyne        ros2 launch velodyne_vlp32c_bringup vlp32c_outdoor.launch.py
 sleep 3
 launch_bg scan_matcher    ros2 launch scan_matcher_bringup scan_matcher.launch.py
 sleep 2
-launch_bg amcl            ros2 launch amcl_2d_localization amcl_localization.launch.py map_name:=my_map
+launch_bg amcl            ros2 launch amcl_2d_localization amcl_localization.launch.py
 sleep 2
 launch_bg base_navigation ros2 launch base_navigation nav2_navigation.launch.py
 
-echo "=== Base 2D lidar (SICK front+rear) + close proximity safety net ==="
-echo "    base_scan_proximity.launch.py brings up omni_base_laser_sensors"
-echo "    itself now (see the file's own header comment) — comment this"
-echo "    block out if not testing the close-proximity safety net."
+echo "=== Base 2D lidar (SICK front+rear) for base_scan_proximity ==="
+echo "    Comment this block out if not testing the close-proximity safety net."
+launch_bg omni_base_laser ros2 launch omni_base_laser_sensors laser_sick-571.launch.py
+sleep 2
 launch_bg base_scan_proximity ros2 launch base_scan_proximity base_scan_proximity.launch.py
 
 echo "=== Traffic control stack ==="
-echo "    robot_audio runs on the drone jetson (10.68.0.208), not here --"
-echo "    that's where the external speaker is connected. See"
-echo "    run_jetson_drone_208.sh. school_traffic_control's play_audio_action"
-echo "    client reaches it fine over the network (same ROS_DOMAIN_ID)."
+launch_bg robot_audio          ros2 launch robot_audio robot_audio.launch.py1
+sleep 2
 launch_bg school_traffic_control ros2 launch school_traffic_control school_traffic_control.launch.py
 
 echo "=== Field-trial data collection ==="
@@ -75,4 +60,3 @@ echo
 echo "All nodes launched. Check logs in $LOGDIR/"
 echo "Next: set the initial pose in RViz on the dev computer (10.68.0.209),"
 echo "then drive the robot until localization converges (see docs/system_test.md)."
-echo "Verify GPS with: ros2 topic echo /fix"
