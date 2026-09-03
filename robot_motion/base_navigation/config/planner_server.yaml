@@ -44,7 +44,11 @@ global_costmap:
         origin_z: 0.0
         z_resolution: 0.1
         z_voxels: 20
-        mark_threshold: 0
+        # See local_costmap's obstacle_voxel_layer (controller_server_
+        # diff_drive.yaml) for why this is 1 and not 0 — avoids a single
+        # leftover marked voxel keeping a cell occupied for several extra
+        # frames after the obstacle is actually gone.
+        mark_threshold: 1
         velodyne:
           topic: "/velodyne_points"
           data_type: "PointCloud2"

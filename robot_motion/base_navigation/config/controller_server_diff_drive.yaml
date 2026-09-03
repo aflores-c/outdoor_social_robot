@@ -146,7 +146,16 @@ local_costmap:
         origin_z: 0.0
         z_resolution: 0.1
         z_voxels: 20
-        mark_threshold: 0
+        # 1 (not 0): a cell only needs to drop to <=1 marked voxel to
+        # read clear, instead of requiring every single voxel in its
+        # column to be individually raytrace-cleared — with
+        # mark_threshold: 0, one stray leftover-marked voxel (e.g. from
+        # imperfect beam-elevation coverage on a given frame) can keep a
+        # cell reading occupied for several frames after the obstacle is
+        # actually gone, even though the point cloud itself updates at
+        # ~10Hz. Real obstacles still mark several voxels immediately, so
+        # this doesn't meaningfully reduce detection sensitivity.
+        mark_threshold: 1
         velodyne:
           topic: "/velodyne_points"
           data_type: "PointCloud2"
