@@ -878,9 +878,6 @@ class SchoolTrafficControlNode(Node):
                 # Still turning the head left or playing the pass gesture —
                 # wait for each to finish before moving to the next step.
                 pass
-            elif not self._pass_gesture_sent:
-                self._pass_gesture_sent = True
-                self._send_motion(self._motion_pass)
             elif self._nav_done and self._nav_succeeded:
                 self._enter_check_vehicle_in_range()
             elif self._nav_done:
@@ -1071,6 +1068,7 @@ class SchoolTrafficControlNode(Node):
         self._send_nav_goal(self._pose_b)
         self._send_motion(self._motion_head_left)
         self._send_motion(self._motion_right_init)
+        self._send_motion(self._motion_pass)
         # Looped for the whole state — see _audio_result_cb.
         self._cross_vehicle_looping = True
         self._send_audio(self._vehicle_pass_message)
